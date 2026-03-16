@@ -2391,6 +2391,10 @@
             Matter.Body.setAngle(obs, obs.angle - 0.05);
             const bhId = obs.bhId || (obs.bhId = Math.random());
             const now = Date.now();
+
+            // Count how many balls are currently captured by this black hole
+            const capturedCount = characters.filter(c => c.bhCapture && c.bhCapture[bhId]).length;
+
             characters.forEach((c) => {
               let dx = obs.position.x - c.body.position.x;
               let dy = obs.position.y - c.body.position.y;
@@ -2402,32 +2406,48 @@
               // Skip if this ball is on cooldown for this blackhole
               if (c.bhCooldown[bhId] && now < c.bhCooldown[bhId]) return;
 
-              if (dist < 250) {
-                // Start capture timer on first entry
-                if (!c.bhCapture[bhId]) c.bhCapture[bhId] = now;
-                const trapped = now - c.bhCapture[bhId];
-
-                if (trapped > 1000) {
-                  // Release — kick ball outward and set cooldown to prevent immediate re-capture
-                  delete c.bhCapture[bhId];
-                  c.bhCooldown[bhId] = now + 4000;
-                  createParticles(c.body.position.x, c.body.position.y, "#a855f7", 14);
-                  const outDx = c.body.position.x - obs.position.x;
-                  const outDy = c.body.position.y - obs.position.y;
-                  const outD = Math.hypot(outDx, outDy) || 1;
-                  Matter.Body.setVelocity(c.body, { x: (outDx / outD) * 8, y: (outDy / outD) * 8 });
-                } else if (trapped < 200) {
-                  // First 200ms: strong pull to suck ball in
-                  let forceMag = 0.00012 * (250 - dist);
-                  Matter.Body.applyForce(c.body, c.body.position, { x: dx * forceMag, y: dy * forceMag });
+              if (dist < 200) {
+                // If already captured, handle release/orbit
+                if (c.bhCapture[bhId]) {
+                  const trapped = now - c.bhCapture[bhId];
+                  if (trapped > 1000) {
+                    // Release — kick ball outward
+                    delete c.bhCapture[bhId];
+                    c.bhCooldown[bhId] = now + 4000;
+                    createParticles(c.body.position.x, c.body.position.y, "#a855f7", 14);
+                    const outDx = c.body.position.x - obs.position.x;
+                    const outDy = c.body.position.y - obs.position.y;
+                    const outD = Math.hypot(outDx, outDy) || 1;
+                    Matter.Body.setVelocity(c.body, { x: (outDx / outD) * 10, y: (outDy / outD) * 10 });
+                  } else if (trapped < 200) {
+                    let forceMag = 0.00012 * (200 - dist);
+                    Matter.Body.applyForce(c.body, c.body.position, { x: dx * forceMag, y: dy * forceMag });
+                  } else {
+                    // Captured: dampen and hold in orbit
+                    Matter.Body.setVelocity(c.body, {
+                      x: c.body.velocity.x * 0.92,
+                      y: c.body.velocity.y * 0.92,
+                    });
+                    let forceMag = 0.00004 * (200 - dist);
+                    Matter.Body.applyForce(c.body, c.body.position, { x: dx * forceMag, y: dy * forceMag });
+                  }
                 } else {
-                  // Captured: dampen and hold in orbit
-                  Matter.Body.setVelocity(c.body, {
-                    x: c.body.velocity.x * 0.92,
-                    y: c.body.velocity.y * 0.92,
-                  });
-                  let forceMag = 0.00004 * (250 - dist);
-                  Matter.Body.applyForce(c.body, c.body.position, { x: dx * forceMag, y: dy * forceMag });
+                  // Not yet captured — only pull in if under the cap of 2
+                  if (capturedCount < 2) {
+                    c.bhCapture[bhId] = now;
+                    let forceMag = 0.00012 * (200 - dist);
+                    Matter.Body.applyForce(c.body, c.body.position, { x: dx * forceMag, y: dy * forceMag });
+                  } else {
+                    // Cap reached — deflect this ball away instead
+                    const outDx = c.body.position.x - obs.position.x;
+                    const outDy = c.body.position.y - obs.position.y;
+                    const outD = Math.hypot(outDx, outDy) || 1;
+                    Matter.Body.applyForce(c.body, c.body.position, {
+                      x: (outDx / outD) * 0.003,
+                      y: (outDy / outD) * 0.003,
+                    });
+                    c.bhCooldown[bhId] = now + 2000; // short cooldown so it doesn't keep trying
+                  }
                 }
               } else {
                 // Ball left pull radius — clear capture (cooldown stays if set)
@@ -3702,7 +3722,7 @@
 
       // BIOME GENERATION
       let currentY = 500;
-      const biomeHeight = 3000; // How tall each world is
+      const biomeHeight = 5000; // How tall each biome zone is
       // In test mode: repeat the single chosen biome wall-to-wall
       let keys = testMode
         ? Array(20).fill(BIOME_KEYS[testBiomeIndex])
