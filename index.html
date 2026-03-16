@@ -2050,6 +2050,13 @@
             activeHazards.splice(i, 1);
             continue;
           }
+          // Remove hazards that drift outside their biome zone
+          if (h._biomeStartY !== undefined && h._biomeEndY !== undefined) {
+            if (h.y < h._biomeStartY - 300 || h.y > h._biomeEndY + 300) {
+              activeHazards.splice(i, 1);
+              continue;
+            }
+          }
           if (h.life <= 0) {
             activeHazards.splice(i, 1);
             continue;
@@ -2518,6 +2525,8 @@
                 ab.antibodyVy = Math.sin(angle) * 9;
                 ab.antibodyLife = 120; // expires after 2s (60fps × 2)
                 ab.targetChar = nearest;
+                ab._biomeStartY = obs._biomeStartY;
+                ab._biomeEndY = obs._biomeEndY;
                 Matter.Body.setVelocity(ab, { x: ab.antibodyVx, y: ab.antibodyVy });
                 Matter.World.add(world, ab);
                 levelObstacles.push(ab);
@@ -3108,6 +3117,7 @@
                 const tx = target.body.position.x - obs.position.x;
                 const ty = target.body.position.y - obs.position.y;
                 const dist = Math.hypot(tx, ty) || 1;
+                const hBiomeS = obs._biomeStartY, hBiomeE = obs._biomeEndY;
 
                 if (obs.demonType === "kokushibo") {
                   // Crescent moon blades — 5 arcing projectiles fan outward
@@ -3120,6 +3130,7 @@
                       vx: Math.cos(angle) * 9, vy: Math.sin(angle) * 9,
                       life: 1.2, r: 14, color: ci3 % 2 === 0 ? "#fde047" : "#93c5fd",
                       angle, spin: (ci3 % 2 === 0 ? 1 : -1) * 0.25,
+                      _biomeStartY: hBiomeS, _biomeEndY: hBiomeE,
                     });
                   }
                 } else if (obs.demonType === "akaza") {
@@ -3132,6 +3143,7 @@
                       vx: Math.cos(a) * 7, vy: Math.sin(a) * 7,
                       life: 0.9, r: 10, color: "#f97316",
                       angle: a,
+                      _biomeStartY: hBiomeS, _biomeEndY: hBiomeE,
                     });
                   }
                 } else if (obs.demonType === "gyutaro") {
@@ -3146,6 +3158,7 @@
                       life: 1.0, r: 12, color: "#dc2626",
                       angle, spin: 0.3,
                       targetChar: target,
+                      _biomeStartY: hBiomeS, _biomeEndY: hBiomeE,
                     });
                   }
                 } else if (obs.demonType === "rui") {
@@ -3158,6 +3171,7 @@
                       vx: 0, vy: 0,
                       life: 1.4, r: 0, color: "#e2e8f0",
                       threadY,
+                      _biomeStartY: hBiomeS, _biomeEndY: hBiomeE,
                     });
                   }
                 }
@@ -3358,6 +3372,24 @@
           if (ab.antibodyLife <= 0) {
             Matter.World.remove(world, ab);
             levelObstacles.splice(ai, 1);
+          }
+        }
+
+        // ── Biome boundary cull: destroy non-static obstacles that drift outside their zone ──
+        // Only runs every 30 frames to avoid per-frame overhead
+        if (frameCount % 30 === 0) {
+          const CULL_MARGIN = 180; // px grace beyond zone edges before destroying
+          for (let ci4 = levelObstacles.length - 1; ci4 >= 0; ci4--) {
+            const obs2 = levelObstacles[ci4];
+            // Skip static obstacles — they never move
+            if (obs2.isStatic) continue;
+            // Skip if not stamped with a zone (e.g. dynamically spawned antibodies already handled above)
+            if (obs2._biomeStartY === undefined) continue;
+            const oy = obs2.position.y;
+            if (oy < obs2._biomeStartY - CULL_MARGIN || oy > obs2._biomeEndY + CULL_MARGIN) {
+              Matter.World.remove(world, obs2);
+              levelObstacles.splice(ci4, 1);
+            }
           }
         }
 
@@ -4087,6 +4119,8 @@
         // Portals are generated within cyberpunk obstacle block above
 
         Matter.World.add(world, newObs);
+        // Stamp each obstacle with its biome zone bounds so stray culling works
+        newObs.forEach(o => { o._biomeStartY = startY; o._biomeEndY = endY; });
         levelObstacles.push(...newObs);
         y += 420;
       }
