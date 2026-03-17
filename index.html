@@ -2577,6 +2577,21 @@
           }
 
           // Rain drag on characters
+          // During normal race (not sprint), prevent balls from reaching finishY
+          if (!suddenDeath) {
+            characters.forEach((c) => {
+              if (c.body.position.y >= finishY - 200) {
+                Matter.Body.setPosition(c.body, {
+                  x: c.body.position.x,
+                  y: finishY - 200,
+                });
+                Matter.Body.setVelocity(c.body, {
+                  x: c.body.velocity.x,
+                  y: Math.min(c.body.velocity.y, 0),
+                });
+              }
+            });
+          }
           // Active Biome Physics Modifiers
           characters.forEach((c) => {
             let y = c.body.position.y;
@@ -10573,7 +10588,11 @@
           ctx.fillRect(0, 0, canvas.width, canvas.height);
         }
 
-        if (physicsLeader.body.position.y >= finishY && !_finishLineCrossed) {
+        if (
+          suddenDeath &&
+          physicsLeader.body.position.y >= finishY &&
+          !_finishLineCrossed
+        ) {
           _finishLineCrossed = true;
           finishOrder = [...characters].sort(
             (a, b) => b.body.position.y - a.body.position.y,
