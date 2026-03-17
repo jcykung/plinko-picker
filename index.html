@@ -4396,24 +4396,7 @@
                 x: obs.frogX,
                 y: (obs.frogY || obs.position.y) + obs.frogHopOffset,
               });
-              // Deflect balls that touch the frog
-              _activeBalls.forEach((c) => {
-                const d = Math.hypot(
-                  c.body.position.x - obs.position.x,
-                  c.body.position.y - obs.position.y,
-                );
-                if (d < c.radius + 14) {
-                  const nx = (c.body.position.x - obs.position.x) / (d || 1);
-                  const ny = (c.body.position.y - obs.position.y) / (d || 1);
-                  const spd = Math.hypot(c.body.velocity.x, c.body.velocity.y);
-                  Matter.Body.setVelocity(c.body, {
-                    x: nx * Math.max(spd, 8),
-                    y: ny * Math.max(spd, 8) - 4,
-                  });
-                  createParticles(obs.position.x, obs.position.y, "#4ade80", 6);
-                  SFX_PLAY(() => SFX.playTone(440, "sine", 0.08, 0.06));
-                }
-              });
+              // Frogs are purely visual — no ball deflection, balls pass through
             } else if (obs.label === "frog-log") {
               // Logs drift across river; balls on top get carried
               obs.roadX =
@@ -4454,8 +4437,8 @@
               if (obs.roadDir < 0 && obs.roadX < -150)
                 obs.roadX = VIEW_WIDTH + 150;
               Matter.Body.setPosition(obs, { x: obs.roadX, y: obs.roadY });
-              // Only non-truck cars bump balls — trucks pass through harmlessly
-              if (!obs.isTruck)
+              // Only red cars bounce balls — everything else passes through
+              if (obs.isRedCar)
                 _activeBalls.forEach((c) => {
                   const dx = Math.abs(c.body.position.x - obs.position.x);
                   const dy = Math.abs(c.body.position.y - obs.position.y);
@@ -5481,7 +5464,7 @@
                 newObs.push(cb);
               }
             }
-            // ── Road lane C — cars go right, medium ──
+            // ── Road lane C — RED cars go right, medium — only these bounce balls ──
             {
               const laneY = y + 308;
               const carW = 82;
@@ -5502,6 +5485,7 @@
                 cb.roadSpeed = spd;
                 cb.roadY = laneY;
                 cb.roadX = cx;
+                cb.isRedCar = true; // only red cars bounce balls
                 newObs.push(cb);
               }
             }
