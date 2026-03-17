@@ -816,6 +816,7 @@
     let suddenDeath = false;
     let sprintStartTime = 0;
     let sprintLaunched = false;
+    let _finishLineCrossed = false;
     let frameCount = 0;
     let gameTime = 0;
     let characterTrails = new Map();
@@ -1168,20 +1169,23 @@
       zap: () => SFX.playTone(800, "sawtooth", 0.1, 0.05),
       marioPipe: () => {
         if (isSfxMuted || !audioCtx) return;
-        // Classic Mario pipe warp: descending chromatic run on square wave
-        const notes = [523.25, 493.88, 466.16, 440.0, 415.30, 392.0, 369.99, 349.23];
-        notes.forEach((freq, i) => {
+        // Classic Mario pipe warp: short descending two-note "doo-doop" on square wave
+        // High note then low note — exactly like the original
+        const notes = [
+          { freq: 130.81, start: 0, dur: 0.12 },  // C3 — first note
+          { freq: 98.00, start: 0.12, dur: 0.18 },  // G2 — lower note, slightly longer
+        ];
+        notes.forEach(({ freq, start, dur }) => {
           const osc = audioCtx.createOscillator();
           const gain = audioCtx.createGain();
           osc.type = "square";
           osc.frequency.value = freq;
-          const t0 = audioCtx.currentTime + i * 0.055;
-          gain.gain.setValueAtTime(0.0, t0);
-          gain.gain.linearRampToValueAtTime(0.14, t0 + 0.01);
-          gain.gain.setValueAtTime(0.14, t0 + 0.04);
-          gain.gain.linearRampToValueAtTime(0.0, t0 + 0.055);
+          const t0 = audioCtx.currentTime + start;
+          gain.gain.setValueAtTime(0.18, t0);
+          gain.gain.setValueAtTime(0.18, t0 + dur - 0.02);
+          gain.gain.linearRampToValueAtTime(0.0, t0 + dur);
           osc.connect(gain); gain.connect(audioCtx._masterOut || audioCtx.destination);
-          osc.start(t0); osc.stop(t0 + 0.06);
+          osc.start(t0); osc.stop(t0 + dur);
         });
       },
       demonSlash: () => {
@@ -1288,16 +1292,20 @@
       if (_musicSourceNode) { try { _musicSourceNode.stop(); } catch (e) { } _musicSourceNode = null; }
     }
 
-    function startGameMusic() {
+    function startGameMusic(forceStart) {
       if (isMusicMuted) return;
+      if (!audioCtx) { initAudio(); }
+      if (audioCtx.state === "suspended") audioCtx.resume();
       _ensureMusicDecoded((buffer) => {
-        if (!gameActive) return;
-        if (_musicSourceNode) { try { _musicSourceNode.stop(); } catch (e) { } }
+        if (!forceStart && !gameActive) return;
+        if (isMusicMuted) return; // re-check after async decode
+        if (_musicSourceNode) { try { _musicSourceNode.stop(); } catch (e) { } _musicSourceNode = null; }
         if (!_musicGainNode) {
           _musicGainNode = audioCtx.createGain();
           _musicGainNode.gain.value = 0.55;
           _musicGainNode.connect(audioCtx._masterOut || audioCtx.destination);
         }
+        _musicGainNode.gain.value = 0.55;
         const src = audioCtx.createBufferSource();
         src.buffer = buffer;
         src.loop = true;
@@ -1313,7 +1321,14 @@
     }
 
     function applyMusicMuteState() {
-      if (_musicGainNode) _musicGainNode.gain.value = isMusicMuted ? 0 : 0.55;
+      if (isMusicMuted) {
+        if (_musicGainNode) _musicGainNode.gain.value = 0;
+        // Stop the source so it doesn't keep playing silently
+        if (_musicSourceNode) { try { _musicSourceNode.stop(); } catch (e) { } _musicSourceNode = null; }
+      } else {
+        // Unmuting — start music with forceStart so async gameActive check doesn't block it
+        startGameMusic(true);
+      }
     }
 
     function playMusicNote(freq, type, duration, vol) {
@@ -1977,10 +1992,13 @@
       // Dynamic scale: 20 seconds = roughly 8000px height based on 0.7 gravity
       finishY = targetDuration * 400 + 1200;
 
-      startTime = Date.now();
+      // startTime will be reset when the intro platform breaks so
+      // the countdown only begins once balls are actually released
+      startTime = Date.now() + 999999; // placeholder — overwritten in breakIntroPlatform
       suddenDeath = false;
       sprintStartTime = 0;
       sprintLaunched = false;
+      _finishLineCrossed = false;
       frameCount = 0;
       cameraY = 200;  // Start centred on the intro platform
       currentZoom = 1.0;
@@ -2411,6 +2429,12 @@
         // Cache Date.now() once per frame — used by blackhole and others
         const _frameNow = Date.now();
 
+        // Build set of balls that are close enough to the camera to interact with obstacles.
+        // Balls far above the viewport (haven't caught up with the pack) are excluded.
+        const _activeBalls = characters.filter(c =>
+          c.body.position.y > cameraY - VIEW_HEIGHT * 1.8
+        );
+
         // Obstacle Animations
         levelObstacles.forEach((obs) => {
           if (obs.label === "spinner")
@@ -2425,13 +2449,13 @@
 
             // Count captured balls (max 2 allowed)
             let capturedCount = 0;
-            for (let _bi = 0; _bi < characters.length; _bi++) {
-              if (characters[_bi].bhCapture && characters[_bi].bhCapture[bhId]) capturedCount++;
+            for (let _bi = 0; _bi < _activeBalls.length; _bi++) {
+              if (_activeBalls[_bi].bhCapture && _activeBalls[_bi].bhCapture[bhId]) capturedCount++;
               if (capturedCount >= 2) break;
             }
 
-            for (let _ci = 0; _ci < characters.length; _ci++) {
-              const c = characters[_ci];
+            for (let _ci = 0; _ci < _activeBalls.length; _ci++) {
+              const c = _activeBalls[_ci];
               // Fast axis-aligned pre-check before expensive hypot
               const dx = obs.position.x - c.body.position.x;
               const dy = obs.position.y - c.body.position.y;
@@ -2493,7 +2517,7 @@
             Matter.Body.setAngle(obs, obs.orbitAngle * 1.4);
             // Check collision with characters — only every other frame
             if (frameCount % 2 !== 0) return;
-            characters.forEach((c) => {
+            _activeBalls.forEach((c) => {
               const d = Math.hypot(c.body.position.x - obs.position.x, c.body.position.y - obs.position.y);
               if (d < c.radius + obs.asteroidR) {
                 // Break into 3–5 small fragments orbiting the same BH
@@ -2523,7 +2547,7 @@
           } else if (obs.label === "enemy") {
             let nearest = null;
             let minDist = 400;
-            characters.forEach((c) => {
+            _activeBalls.forEach((c) => {
               let dist =
                 Math.abs(c.body.position.y - obs.position.y) +
                 Math.abs(c.body.position.x - obs.position.x);
@@ -2563,11 +2587,11 @@
             if (!window._abCount || frameCount % 60 === 0) {
               window._abCount = levelObstacles.filter(o => o.label === "antibody" && !o.stuck).length;
             }
-            if (obs.antibodyTimer > 120 && window._abCount < 20) { // fire every ~2s max, global cap 20
+            if (obs.antibodyTimer > 60 && window._abCount < 40) { // fire every ~1s max, global cap 40
               obs.antibodyTimer = 0;
               // Pick nearest ball only
               let nearest = null, nearestDist = Infinity;
-              characters.forEach((target) => {
+              _activeBalls.forEach((target) => {
                 const d = Math.hypot(target.body.position.x - obs.position.x, target.body.position.y - obs.position.y);
                 if (d < nearestDist) { nearestDist = d; nearest = target; }
               });
@@ -2582,8 +2606,8 @@
                   isStatic: false, isSensor: true,
                   renderColor: "#fb7185", label: "antibody", frictionAir: 0.004,
                 });
-                ab.antibodyVx = Math.cos(angle) * 9;
-                ab.antibodyVy = Math.sin(angle) * 9;
+                ab.antibodyVx = Math.cos(angle) * 16;
+                ab.antibodyVy = Math.sin(angle) * 16;
                 ab.antibodyLife = 120; // expires after 2s (60fps × 2)
                 ab.targetChar = nearest;
                 ab._biomeStartY = obs._biomeStartY;
@@ -2612,7 +2636,7 @@
             // Check for ball contact — eat on touch
             const macR = obs.circleRadius || 44;
             let touched = null, touchDist = Infinity;
-            characters.forEach((c) => {
+            _activeBalls.forEach((c) => {
               const d = Math.hypot(c.body.position.x - obs.position.x, c.body.position.y - obs.position.y);
               if (d < macR + c.radius + 6 && d < touchDist) { touchDist = d; touched = c; }
             });
@@ -2642,7 +2666,7 @@
                 Matter.Body.setVelocity(obs, { x: (tx / td) * spd, y: (ty / td) * spd });
               }
               // Stick to any ball it touches — max 5 antibodies per ball
-              characters.forEach((c) => {
+              _activeBalls.forEach((c) => {
                 if (obs.stuck) return;
                 const d = Math.hypot(c.body.position.x - obs.position.x, c.body.position.y - obs.position.y);
                 if (d < c.radius + 9) {
@@ -2697,7 +2721,7 @@
             let newX = obs.homeX + Math.sin(lt + obs.logPhase) * 200;
             Matter.Body.setPosition(obs, { x: newX, y: obs.homeY });
             // Push characters sitting on top
-            characters.forEach((c) => {
+            _activeBalls.forEach((c) => {
               let dx = Math.abs(c.body.position.x - obs.position.x);
               let dy = c.body.position.y - obs.position.y;
               if (dx < 75 && dy > -20 && dy < 25) {
@@ -2717,7 +2741,7 @@
               y: obs.position.y,
             });
             // Push characters horizontally
-            characters.forEach((c) => {
+            _activeBalls.forEach((c) => {
               let dx = Math.abs(c.body.position.x - obs.position.x);
               let bw = (obs.bounds.max.x - obs.bounds.min.x) / 2;
               let dy = c.body.position.y - obs.position.y;
@@ -2737,7 +2761,7 @@
             });
           } else if (obs.label === "tornado-sensor") {
             // Tornado — swirl characters in a circle
-            characters.forEach((c) => {
+            _activeBalls.forEach((c) => {
               let dx = c.body.position.x - obs.position.x;
               let dy = c.body.position.y - obs.position.y;
               let dist = Math.sqrt(dx * dx + dy * dy);
@@ -2784,7 +2808,7 @@
             let newY = obs.homeY + Math.cos(t * 0.6 + obs.floatPhase) * 40;
             Matter.Body.setPosition(obs, { x: newX, y: newY });
             // Push characters away from bubble center (surface tension)
-            characters.forEach((c) => {
+            _activeBalls.forEach((c) => {
               let dx = c.body.position.x - obs.position.x;
               let dy = c.body.position.y - obs.position.y;
               let dist = Math.sqrt(dx * dx + dy * dy);
@@ -2805,7 +2829,7 @@
               y: obs.position.y + obs.projVy,
             });
             // Hit detection
-            characters.forEach((c) => {
+            _activeBalls.forEach((c) => {
               let dx = c.body.position.x - obs.position.x;
               let dy = c.body.position.y - obs.position.y;
               if (Math.sqrt(dx * dx + dy * dy) < c.radius + 10) {
@@ -2847,7 +2871,7 @@
             // When highly tilted, apply a water pour force to nearby characters
             if (Math.abs(tiltAngle) > 0.35) {
               let pourDir = tiltAngle > 0 ? 1 : -1;
-              characters.forEach((c) => {
+              _activeBalls.forEach((c) => {
                 let dx = Math.abs(c.body.position.x - obs.position.x);
                 let dy = c.body.position.y - obs.position.y;
                 if (dx < 120 && dy > -20 && dy < 150) {
@@ -2886,7 +2910,7 @@
                 );
               }
               // Blast nearby characters
-              characters.forEach((c) => {
+              _activeBalls.forEach((c) => {
                 let dx = c.body.position.x - obs.position.x;
                 let dy = c.body.position.y - obs.position.y;
                 let dist = Math.sqrt(dx * dx + dy * dy);
@@ -2909,7 +2933,7 @@
             obs.snakeTurnTimer++;
             // Steer toward nearest character every 18 frames
             let nearest = null; let minSD = 9999;
-            characters.forEach((c) => {
+            _activeBalls.forEach((c) => {
               const d = Math.hypot(c.body.position.x - obs.snakeX, c.body.position.y - obs.snakeY);
               if (d < minSD) { minSD = d; nearest = c; }
             });
@@ -2917,8 +2941,8 @@
               obs.snakeTurnTimer = 0;
               const tdx = nearest.body.position.x - obs.snakeX;
               const tdy = nearest.body.position.y - obs.snakeY;
-              // Horizontal bias: prefer horizontal unless vertical difference is much larger
-              if (Math.abs(tdx) > Math.abs(tdy) * 0.4) {
+              // 50/50 chance of turning horizontal vs vertical toward nearest ball
+              if (Math.random() < 0.5) {
                 const newDx = tdx > 0 ? 5 : -5;
                 if (!(newDx === -obs.snakeDirX && obs.snakeDirX !== 0)) { obs.snakeDirX = newDx; obs.snakeDirY = 0; }
               } else {
@@ -2941,7 +2965,7 @@
             const SNAKE_R = 13;
             obs.snakeBody.forEach((seg, si) => {
               if (si % 10 !== 0) return; // check every 10th point
-              characters.forEach((c) => {
+              _activeBalls.forEach((c) => {
                 const d = Math.hypot(c.body.position.x - seg.x, c.body.position.y - seg.y);
                 if (d < c.radius + SNAKE_R) {
                   const nx = (c.body.position.x - seg.x) / (d || 1);
@@ -2991,7 +3015,7 @@
             });
 
             // Slice characters — ninja bomb! respawn
-            characters.forEach((c) => {
+            _activeBalls.forEach((c) => {
               if (c.sliceCooldown > 0) { c.sliceCooldown--; return; }
               const d = Math.hypot(c.body.position.x - sweepX, c.body.position.y - obs.bladeHomeY);
               const bladeHalfLen = (obs.bounds.max.x - obs.bounds.min.x) / 2;
@@ -3021,7 +3045,7 @@
             obs.f1X = (obs.f1X || obs.homeX) + obs.f1Speed;
             if (obs.f1X > VIEW_WIDTH + 150) obs.f1X = -150;
             Matter.Body.setPosition(obs, { x: obs.f1X, y: obs.homeY });
-            characters.forEach((c) => {
+            _activeBalls.forEach((c) => {
               const dx = Math.abs(c.body.position.x - obs.f1X);
               const dy = Math.abs(c.body.position.y - obs.homeY);
               if (dx < 60 && dy < 20) {
@@ -3035,7 +3059,7 @@
           } else if (obs.label === "question-block") {
             // Detect ball hitting from below — bump triggers coin
             if (!obs.bumped) {
-              characters.forEach((c) => {
+              _activeBalls.forEach((c) => {
                 if (obs.bumped) return;
                 const dx = Math.abs(c.body.position.x - obs.position.x);
                 const dy = obs.position.y - c.body.position.y; // positive = ball is below block
@@ -3080,7 +3104,7 @@
             const pipeBottom = obs.position.y + pipeH / 2;
             const pipeTop = obs.position.y - pipeH / 2;
             const pipeHalfW = (obs.bounds.max.x - obs.bounds.min.x) / 2;
-            characters.forEach((c) => {
+            _activeBalls.forEach((c) => {
               if (c.pipeCooldown > 0) { c.pipeCooldown--; return; }
               const dx = Math.abs(c.body.position.x - obs.position.x);
               const dy = c.body.position.y - obs.position.y;
@@ -3103,7 +3127,7 @@
           } else if (obs.label === "mario-platform") {
             // Check if any ball is resting on top — if so, trigger break
             if (!obs.breaking) {
-              characters.forEach((c) => {
+              _activeBalls.forEach((c) => {
                 const dx = c.body.position.x - obs.position.x;
                 const dy = c.body.position.y - obs.position.y;
                 const pw = (obs.bounds.max.x - obs.bounds.min.x) / 2;
@@ -3178,7 +3202,7 @@
 
               // Find nearest ball
               let target = null, minD2 = Infinity;
-              characters.forEach(c => {
+              _activeBalls.forEach(c => {
                 const d = Math.hypot(c.body.position.x - obs.position.x, c.body.position.y - obs.position.y);
                 if (d < minD2) { minD2 = d; target = c; }
               });
@@ -3255,7 +3279,7 @@
             // Per-frame proximity check — collision events miss fast-moving balls
             if (!obs.partner) return;
             const now_p = Date.now();
-            characters.forEach((c) => {
+            _activeBalls.forEach((c) => {
               const cObj = characters.find(ch => ch.body === c.body) || c;
               if (cObj.lastPortalTime && now_p - cObj.lastPortalTime < 1200) return;
               const d = Math.hypot(c.body.position.x - obs.position.x, c.body.position.y - obs.position.y);
@@ -3301,7 +3325,7 @@
 
             // Smash when pieces collide — only check every 4 frames to avoid O(n²) lag
             // Ball hits ANY tetromino → shatter into individual mino cells
-            characters.forEach((c) => {
+            _activeBalls.forEach((c) => {
               if (obs.tetBroken) return;
               const dx6 = c.body.position.x - obs.position.x;
               const dy6 = c.body.position.y - obs.position.y;
@@ -3354,7 +3378,7 @@
               return;
             }
             // Hit characters
-            characters.forEach((c) => {
+            _activeBalls.forEach((c) => {
               const d = Math.hypot(c.body.position.x - obs.position.x, c.body.position.y - obs.position.y);
               if (d < c.radius + 14) {
                 createExplosion(obs.position.x, obs.position.y, 0.8);
@@ -3383,7 +3407,7 @@
             obs.frogHopOffset = Math.min(0, (obs.frogHopOffset || 0) + 1.5);
             Matter.Body.setPosition(obs, { x: obs.frogX, y: (obs.frogY || obs.position.y) + obs.frogHopOffset });
             // Deflect balls that touch the frog
-            characters.forEach((c) => {
+            _activeBalls.forEach((c) => {
               const d = Math.hypot(c.body.position.x - obs.position.x, c.body.position.y - obs.position.y);
               if (d < c.radius + 14) {
                 const nx = (c.body.position.x - obs.position.x) / (d || 1);
@@ -3402,7 +3426,7 @@
             Matter.Body.setPosition(obs, { x: obs.roadX, y: obs.roadY });
             // Carry balls resting on top of the log
             const logHalfW = (obs.logW || 120) / 2;
-            characters.forEach((c) => {
+            _activeBalls.forEach((c) => {
               const dx = Math.abs(c.body.position.x - obs.position.x);
               const dy = obs.position.y - c.body.position.y;
               if (dx < logHalfW + c.radius - 4 && dy > 0 && dy < c.radius + 16 && Math.abs(c.body.velocity.y) < 4) {
@@ -3424,7 +3448,7 @@
               obs.roadX = VIEW_WIDTH + 150;
             Matter.Body.setPosition(obs, { x: obs.roadX, y: obs.roadY });
             // Run over characters in the lane
-            characters.forEach((c) => {
+            _activeBalls.forEach((c) => {
               const dx = Math.abs(c.body.position.x - obs.position.x);
               const dy = Math.abs(c.body.position.y - obs.position.y);
               if (dx < 58 && dy < 26) {
@@ -3451,7 +3475,7 @@
             let ot = Date.now() / 400;
             let pulse = 1 + 0.15 * Math.sin(ot + (obs.orbPhase || 0));
             obs._pulse = pulse;
-            characters.forEach((c) => {
+            _activeBalls.forEach((c) => {
               let dx = c.body.position.x - obs.position.x;
               let dy = c.body.position.y - obs.position.y;
               let r = (obs.circleRadius || 22) * pulse;
@@ -3471,7 +3495,7 @@
             });
           } else if (obs.label === "mine") {
             if (obs.exploded) return; // use return, not continue (we're inside forEach)
-            characters.forEach((c) => {
+            _activeBalls.forEach((c) => {
               let dx = c.body.position.x - obs.position.x;
               let dy = c.body.position.y - obs.position.y;
               if (Math.sqrt(dx * dx + dy * dy) < 55) {
@@ -3926,7 +3950,7 @@
           newObs.push(sign);
         } else if (type === "immune") {
           // Dense swarm of B-cells spread across the FULL cluster height
-          const numCells = 16 + Math.floor(Math.random() * 6);
+          const numCells = 8 + Math.floor(Math.random() * 3);
           for (let ci = 0; ci < numCells; ci++) {
             const cx = 40 + Math.random() * (VIEW_WIDTH - 80);
             const cy = y + (ci / numCells) * 400 + Math.random() * 20;
@@ -4017,24 +4041,31 @@
             newObs.push(f1c);
           }
         } else if (type === "snake") {
-          // Spawn 4 snakes per cluster, spread across full height
-          const snakeColors = ["#4ade80", "#22d3ee", "#f87171", "#fbbf24"];
-          for (let si2 = 0; si2 < 4; si2++) {
-            const snakeHead = Matter.Bodies.circle(
-              100 + Math.random() * (VIEW_WIDTH - 200), y + 50 + si2 * 90, 14, {
+          // 3 snakes per cluster, evenly spaced, each starting in a different direction
+          const snakeColors = ["#4ade80", "#22d3ee", "#f87171"];
+          const startDirs = [
+            { dx: 5, dy: 0 },   // right
+            { dx: 0, dy: 5 },   // down
+            { dx: -5, dy: 0 },  // left
+          ];
+          for (let si2 = 0; si2 < 3; si2++) {
+            const spawnX = 150 + si2 * ((VIEW_WIDTH - 300) / 2);
+            const spawnY = y + 70 + si2 * 140; // evenly spaced: y+70, y+210, y+350
+            const snakeHead = Matter.Bodies.circle(spawnX, spawnY, 14, {
               isStatic: true, isSensor: false,
               restitution: 0.8, friction: 0.0,
-              renderColor: snakeColors[si2 % snakeColors.length], label: "snake-head",
+              renderColor: snakeColors[si2], label: "snake-head",
             });
-            snakeHead.snakeX = snakeHead.position.x;
-            snakeHead.snakeY = snakeHead.position.y;
-            snakeHead.snakeDirX = si2 % 2 === 0 ? 5 : -5; snakeHead.snakeDirY = 0;
-            snakeHead.snakeLen = 20 + Math.floor(Math.random() * 16);
+            snakeHead.snakeX = spawnX;
+            snakeHead.snakeY = spawnY;
+            snakeHead.snakeDirX = startDirs[si2].dx;
+            snakeHead.snakeDirY = startDirs[si2].dy;
+            snakeHead.snakeLen = 22 + Math.floor(Math.random() * 14);
             snakeHead.snakeBody = [];
-            snakeHead.snakeTurnTimer = Math.floor(Math.random() * 40);
+            snakeHead.snakeTurnTimer = Math.floor(Math.random() * 30);
             snakeHead.snakeZoneY = y;
             snakeHead.snakeZoneBot = y + 420;
-            snakeHead.snakeColor = snakeColors[si2 % snakeColors.length];
+            snakeHead.snakeColor = snakeColors[si2];
             newObs.push(snakeHead);
           }
         } else if (type === "smash") {
@@ -4128,13 +4159,16 @@
           newObs.push(qb);
           // 2–3 green pipes spread across the width
           const numPipes = 2 + Math.floor(Math.random() * 2);
-          const pipeXSlots = [0.15, 0.4, 0.65, 0.85];
-          // Shuffle slots so pipes aren't always in the same spots
+          // Pipes spread across the FULL cluster height — no two pipes in the same vertical band
+          // Each pipe gets a unique Y slice of the 420px zone so balls can't fall through multiples
+          const pipeXSlots = [0.12, 0.35, 0.58, 0.82];
           pipeXSlots.sort(() => Math.random() - 0.5);
+          const pipeYSlots = [60, 175, 285, 370]; // fixed vertical positions across zone
           for (let pi = 0; pi < numPipes; pi++) {
             const pipex = Math.round(pipeXSlots[pi] * VIEW_WIDTH);
-            const pipeH = 80 + Math.random() * 60;
-            const pipe = Matter.Bodies.rectangle(pipex, y + 80 + pi * 70, 48, pipeH, {
+            const pipeH = 80 + Math.random() * 50;
+            const pipeY = y + pipeYSlots[pi] + Math.round((Math.random() - 0.5) * 20);
+            const pipe = Matter.Bodies.rectangle(pipex, pipeY, 48, pipeH, {
               isStatic: true, isSensor: true,
               renderColor: "#16a34a", label: "mario-pipe",
             });
@@ -4314,7 +4348,7 @@
           };
           const TKEYS = Object.keys(TETROMINOS);
           const CELL = 32;
-          const numPieces = 22 + Math.floor(Math.random() * 6);
+          const numPieces = 11 + Math.floor(Math.random() * 3);
           const sectionH = 420; // matches y += 420 loop step
           for (let ti = 0; ti < numPieces; ti++) {
             const tKey = TKEYS[Math.floor(Math.random() * TKEYS.length)];
@@ -4445,6 +4479,8 @@
       });
       introPlatformBodies = [];
       SFX_PLAY(() => SFX.playNoise(0.5, 0.4));
+      // Start the countdown NOW — balls have just been released
+      startTime = Date.now();
 
       setTimeout(() => { introPhase = "done"; }, 2000);
     }
@@ -7101,7 +7137,8 @@
 
       // Timer
       let elapsed = (Date.now() - startTime) / 1000;
-      let timeLeft = Math.max(0, targetDuration - Math.floor(elapsed));
+      // Clamp: before platform breaks elapsed is negative, show full duration
+      let timeLeft = elapsed < 0 ? targetDuration : Math.max(0, targetDuration - Math.floor(elapsed));
       let timerDisplay = document.getElementById("timer-display");
       timerDisplay.innerText = timeLeft + "s";
 
@@ -7153,39 +7190,41 @@
 
         // Small delay so camera can reframe before balls start moving hard
         sprintLaunched = false;
+        _finishLineCrossed = false;
         setTimeout(() => {
           if (!gameActive) return;
           sprintLaunched = true;
           const SPRINT_SECS = 5.0;
           const SPRINT_STEPS = SPRINT_SECS * 60;
           const G = 0.7;
+          // Use the LEADER's distance for ALL balls — preserves race order
+          const leaderDist = Math.max(200, finishY - physicsLeader.body.position.y);
+          const sharedV0 = Math.max(8, (leaderDist - 0.5 * G * SPRINT_STEPS) / SPRINT_STEPS);
           characters.forEach((c) => {
-            const dist = Math.max(200, finishY - c.body.position.y);
-            // v0 so ball arrives at finishY in SPRINT_SECS with gravity
-            const v0 = Math.max(8, (dist - 0.5 * G * SPRINT_STEPS) / SPRINT_STEPS);
             Matter.Body.setVelocity(c.body, {
               x: c.body.velocity.x * 0.15,
-              y: v0,
+              y: sharedV0,
             });
-            c.sprintVy = v0;
+            c.sprintVy = sharedV0;
           });
-        }, 250); // 0.25s — just enough for camera to snap into position
+        }, 250);
       }
 
-      // Each frame during sprint: ensure balls keep moving downward
+      // Each frame during sprint: keep all balls moving at the same pace
+      // Uses leader's remaining distance so relative positions are preserved
       if (suddenDeath && sprintLaunched) {
         const timeElapsed = Math.max(0, (Date.now() - sprintStartTime - 250) / 1000);
         const timeRemain = Math.max(0.3, 5.5 - timeElapsed);
+        const leaderDistLeft = finishY - physicsLeader.body.position.y;
+        const sharedNeededVy = leaderDistLeft > 0 ? leaderDistLeft / (timeRemain * 60) : 0;
         characters.forEach((c) => {
           if (!c.sprintVy) return;
-          const distLeft = finishY - c.body.position.y;
-          if (distLeft <= 0) return;
-          const neededVy = distLeft / (timeRemain * 60);
-          // Nudge if falling too slowly — keep the race moving
-          if (c.body.velocity.y < neededVy * 0.65) {
+          if (finishY - c.body.position.y <= 0) return;
+          // All balls get the same vertical nudge — leader stays leader
+          if (c.body.velocity.y < sharedNeededVy * 0.65) {
             Matter.Body.setVelocity(c.body, {
-              x: c.body.velocity.x,
-              y: neededVy,
+              x: c.body.velocity.x * 0.85, // damp horizontal drift during sprint
+              y: sharedNeededVy,
             });
           }
         });
@@ -7208,23 +7247,28 @@
       let targetZoom = 1.0;
       let targetTimeScale = 1.0;
 
-      if (distToFinish > 0 && distToFinish < 800 && !suddenDeath) {
-        // Zoom in and slow down as leader approaches finish — only during normal race
+      if (suddenDeath && sprintLaunched) {
+        // SPRINT: zoom in continuously toward finish
+        const sprintElapsed = (Date.now() - sprintStartTime) / 1000;
+        const sprintZoom = Math.min(2.0, 1.0 + sprintElapsed * 0.15);
+        targetZoom = sprintZoom;
+        if (distToFinish > 0 && distToFinish < 1200) {
+          const t2 = 1.0 - distToFinish / 1200;
+          targetZoom = Math.max(sprintZoom, 1.5 + t2 * 1.5);
+          targetTimeScale = Math.max(0.4, 1.0 - t2 * 0.6); // never below 0.4x — stays fast enough
+        }
+      } else if (distToFinish > 0 && distToFinish < 800 && !suddenDeath) {
         let t2 = 1.0 - Math.max(0, distToFinish - 80) / 720;
         targetZoom = 1.0 + t2 * 2.8;
         targetTimeScale = Math.max(0.25, 1.0 - t2 * 0.75);
-      } else if (distToFinish > 0 && distToFinish < 800 && suddenDeath) {
-        // During sprint: start zooming at 800px out so camera is already mid-zoom when line is crossed
-        let t2 = 1.0 - distToFinish / 800;
-        targetZoom = 1.0 + t2 * 2.5;
-        targetTimeScale = Math.max(0.25, 1.0 - t2 * 0.75);
       }
-      if (distToFinish > 1200) {
+
+      if (!suddenDeath && distToFinish > 1200) {
         engine.timing.timeScale = 1.0;
         currentZoom += (1.0 - currentZoom) * 0.06;
       } else {
-        currentZoom += (targetZoom - currentZoom) * 0.05;
-        engine.timing.timeScale += (targetTimeScale - engine.timing.timeScale) * 0.06;
+        currentZoom += (targetZoom - currentZoom) * 0.06;
+        engine.timing.timeScale += (targetTimeScale - engine.timing.timeScale) * 0.05;
       }
 
       let baseScale = canvas.width / VIEW_WIDTH;
@@ -7234,29 +7278,10 @@
 
       let targetCameraY;
       if (suddenDeath && sprintLaunched) {
-        // SPRINT CAMERA:
-        // Phase 1 — leader centred, camera races to keep up
-        // Phase 2 — once finish line would be within one screen-height, lock finish to bottom
-        const finishVisibleThreshold = effectiveViewHeight * 0.85;
-        if (distToFinish < finishVisibleThreshold) {
-          // Blend from leader-centred toward finish-pinned-at-bottom
-          const blend = Math.min(1, 1 - distToFinish / finishVisibleThreshold);
-          const leaderCentred = physicsLeader.body.position.y;
-          const finishAtBottom = finishY - effectiveViewHeight * 0.48;
-          targetCameraY = leaderCentred + (finishAtBottom - leaderCentred) * blend;
-        } else {
-          targetCameraY = physicsLeader.body.position.y;
-        }
+        // Pin physicsLeader at exactly 30% from the top — hardcoded, no lerp issues
+        targetCameraY = physicsLeader.body.position.y + effectiveViewHeight * (-0.5 + 0.30);
       } else {
-        // NORMAL + FLIP CAMERA: leader perfectly centred vertically
-        // cameraLeader already switches to "lowest Y = visual winner" when fully flipped
         targetCameraY = cameraLeader.body.position.y;
-      }
-
-      // Hard clamp: never scroll so far that the physics leader leaves the top 15% of viewport
-      const leaderScreenY = physicsLeader.body.position.y - (targetCameraY - effectiveViewHeight / 2);
-      if (leaderScreenY < effectiveViewHeight * 0.1) {
-        targetCameraY = physicsLeader.body.position.y - effectiveViewHeight * 0.1 + effectiveViewHeight / 2;
       }
 
       targetCameraY = Math.max(
@@ -7264,10 +7289,8 @@
         Math.min(finishY + effectiveViewHeight * 0.1, targetCameraY),
       );
 
-      // Camera lerp: fast during sprint so it actually keeps up with fast-moving balls
-      const camSpeed = (suddenDeath && sprintLaunched)
-        ? ((Date.now() - sprintStartTime) < 300 ? 0.45 : 0.28)
-        : 0.1;
+      // Sprint: instant camera snap to leader — no lerp lag that loses them
+      const camSpeed = (suddenDeath && sprintLaunched) ? 1.0 : 0.1;
       cameraY += (targetCameraY - cameraY) * camSpeed;
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -7278,13 +7301,17 @@
       let targetOffsetX = (canvas.width - VIEW_WIDTH * finalScale) / 2;
       let xSnapStrength = distToFinish < 1800 ? 0.18 : 0.1;
       if (currentZoom > 1.05) {
-        targetOffsetX = canvas.width / 2 - cameraLeader.body.position.x * finalScale;
+        // During sprint: center on physicsLeader. Normal race: center on cameraLeader.
+        const xTarget = (suddenDeath && sprintLaunched) ? physicsLeader : cameraLeader;
+        targetOffsetX = canvas.width / 2 - xTarget.body.position.x * finalScale;
         targetOffsetX = Math.max(
           canvas.width - VIEW_WIDTH * finalScale,
           Math.min(0, targetOffsetX),
         );
       }
-      cameraXOffset += (targetOffsetX - cameraXOffset) * xSnapStrength;
+      // Sprint: instant X snap so leader is always centred
+      const xSpeed = (suddenDeath && sprintLaunched) ? 1.0 : xSnapStrength;
+      cameraXOffset += (targetOffsetX - cameraXOffset) * xSpeed;
 
       // Decay mine shake
       mineShakeX *= 0.82;
@@ -8109,9 +8136,19 @@
         ctx.fillRect(0, 0, canvas.width, canvas.height);
       }
 
-      if (physicsLeader.body.position.y >= finishY) {
+      if (physicsLeader.body.position.y >= finishY && !_finishLineCrossed) {
+        _finishLineCrossed = true;
         finishOrder = [...characters].sort((a, b) => b.body.position.y - a.body.position.y);
-        endGame(physicsLeader);
+        // Freeze everything right at the line
+        engine.timing.timeScale = 0.0;
+        characters.forEach(c => {
+          Matter.Body.setPosition(c.body, { x: c.body.position.x, y: Math.min(c.body.position.y, finishY + 20) });
+          Matter.Body.setVelocity(c.body, { x: 0, y: 0 });
+        });
+        // One frame to render the frozen scene, then announce winner
+        requestAnimationFrame(() => {
+          endGame(physicsLeader);
+        });
         return;
       }
       animationFrame = requestAnimationFrame(renderLoop);
@@ -8514,6 +8551,7 @@
       suddenDeath = false;
       sprintStartTime = 0;
       sprintLaunched = false;
+      _finishLineCrossed = false;
       sfxThisFrame = 0;
 
       document.getElementById("timer-display").classList.remove("text-red-500", "animate-pulse");
