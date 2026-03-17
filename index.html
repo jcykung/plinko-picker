@@ -400,11 +400,24 @@
         >
           PLINKO PICKER
         </h1>
-        <h2
-          class="text-base sm:text-xl font-bold text-gray-400 mb-1 uppercase tracking-widest"
-        >
-          &gt; JONATHAN KUNG
-        </h2>
+        <div class="flex items-center justify-center gap-3 mb-1">
+          <h2
+            class="text-sm font-semibold text-gray-500 uppercase tracking-widest"
+            style="font-family: &quot;Georgia&quot;, serif"
+          >
+            &gt; Jonathan Kung
+          </h2>
+          <button
+            id="btn-tip-me"
+            onclick="
+              document.getElementById('tip-modal').classList.remove('hidden')
+            "
+            class="flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold transition-all hover:opacity-80"
+            style="background: #ff5e5b; color: #fff"
+          >
+            <span>☕</span> Tip Me
+          </button>
+        </div>
         <p class="text-gray-300 text-xs sm:text-sm hidden sm:block">
           Upload your CSV, set the timer, and let the race begin!
         </p>
@@ -419,6 +432,51 @@
           >
           by inono777 (Pixabay)
         </p>
+      </div>
+
+      <!-- Tip Modal -->
+      <div
+        id="tip-modal"
+        class="hidden fixed inset-0 z-[200] flex items-center justify-center p-4"
+        style="background: rgba(0, 0, 0, 0.75)"
+      >
+        <div
+          class="relative rounded-2xl p-6 max-w-xs w-full text-center shadow-2xl"
+          style="
+            background: #1e1e2e;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+          "
+        >
+          <button
+            onclick="
+              document.getElementById('tip-modal').classList.add('hidden')
+            "
+            class="absolute top-3 right-3 text-gray-500 hover:text-white text-lg leading-none"
+          >
+            &times;
+          </button>
+          <div class="text-3xl mb-2">☕</div>
+          <h3
+            class="text-white font-bold text-lg mb-1"
+            style="font-family: &quot;Georgia&quot;, serif"
+          >
+            Jonathan Kung
+          </h3>
+          <p class="text-gray-400 text-sm mb-4">
+            Full-time teacher &amp; tool builder. If this saved you time in the
+            classroom, consider buying me a coffee!
+          </p>
+          <a
+            href="https://ko-fi.com/coolpuddytat"
+            target="_blank"
+            rel="noopener"
+            class="inline-flex items-center gap-2 px-5 py-2.5 rounded-full font-bold text-white text-sm transition-all hover:opacity-90"
+            style="background: #ff5e5b"
+          >
+            <span>☕</span> Buy me a coffee
+          </a>
+          <p class="text-gray-600 text-xs mt-4">ko-fi.com/coolpuddytat</p>
+        </div>
       </div>
 
       <!-- Active class bar -->
@@ -2577,17 +2635,13 @@
           }
 
           // Rain drag on characters
-          // During normal race (not sprint), prevent balls from reaching finishY
+          // Cap downward velocity during normal race so balls can't reach finishY early
           if (!suddenDeath) {
             characters.forEach((c) => {
-              if (c.body.position.y >= finishY - 200) {
-                Matter.Body.setPosition(c.body, {
-                  x: c.body.position.x,
-                  y: finishY - 200,
-                });
+              if (c.body.velocity.y > 28) {
                 Matter.Body.setVelocity(c.body, {
                   x: c.body.velocity.x,
-                  y: Math.min(c.body.velocity.y, 0),
+                  y: 28,
                 });
               }
             });
@@ -3968,6 +4022,11 @@
                   });
                   Matter.Body.setAngularVelocity(rightH, 0.08);
                   Matter.World.add(world, [leftH, rightH]);
+                  // Stamp debris with parent's biome zone so boundary cull removes them
+                  leftH._biomeStartY = obs._biomeStartY;
+                  leftH._biomeEndY = obs._biomeEndY;
+                  rightH._biomeStartY = obs._biomeStartY;
+                  rightH._biomeEndY = obs._biomeEndY;
                   levelObstacles.push(leftH, rightH);
                   createParticles(cx, cy, "#c84b11", 12);
                   createParticles(cx, cy, "#f59e0b", 6);
@@ -3979,7 +4038,14 @@
               }
               // Remove debris when off screen
             } else if (obs.label === "mario-debris") {
-              if (obs.position.y > cameraY + VIEW_HEIGHT * 1.5) {
+              // Remove if outside its biome zone or scrolled far off screen
+              const outOfBiome =
+                obs._biomeEndY !== undefined &&
+                obs.position.y > obs._biomeEndY + 60;
+              const offScreen =
+                obs.position.y > cameraY + VIEW_HEIGHT * 0.8 ||
+                obs.position.y < cameraY - VIEW_HEIGHT * 0.8;
+              if (outOfBiome || offScreen) {
                 Matter.World.remove(world, obs);
                 const idx = levelObstacles.indexOf(obs);
                 if (idx !== -1) levelObstacles.splice(idx, 1);
@@ -4388,30 +4454,31 @@
               if (obs.roadDir < 0 && obs.roadX < -150)
                 obs.roadX = VIEW_WIDTH + 150;
               Matter.Body.setPosition(obs, { x: obs.roadX, y: obs.roadY });
-              // Run over characters in the lane
-              _activeBalls.forEach((c) => {
-                const dx = Math.abs(c.body.position.x - obs.position.x);
-                const dy = Math.abs(c.body.position.y - obs.position.y);
-                if (dx < 58 && dy < 26) {
-                  Matter.Body.setVelocity(c.body, {
-                    x: obs.roadDir * obs.roadSpeed * 3.5,
-                    y: -18,
-                  });
-                  createParticles(
-                    c.body.position.x,
-                    c.body.position.y,
-                    obs.renderColor || "#ef4444",
-                    14,
-                  );
-                  createParticles(
-                    c.body.position.x,
-                    c.body.position.y,
-                    "#ffffff",
-                    6,
-                  );
-                  SFX_PLAY(() => SFX.playNoise(0.18, 0.25));
-                }
-              });
+              // Only non-truck cars bump balls — trucks pass through harmlessly
+              if (!obs.isTruck)
+                _activeBalls.forEach((c) => {
+                  const dx = Math.abs(c.body.position.x - obs.position.x);
+                  const dy = Math.abs(c.body.position.y - obs.position.y);
+                  if (dx < 58 && dy < 26) {
+                    Matter.Body.setVelocity(c.body, {
+                      x: obs.roadDir * obs.roadSpeed * 3.5,
+                      y: -18,
+                    });
+                    createParticles(
+                      c.body.position.x,
+                      c.body.position.y,
+                      obs.renderColor || "#ef4444",
+                      14,
+                    );
+                    createParticles(
+                      c.body.position.x,
+                      c.body.position.y,
+                      "#ffffff",
+                      6,
+                    );
+                    SFX_PLAY(() => SFX.playNoise(0.18, 0.25));
+                  }
+                });
             } else if (obs.label === "gd-orb") {
               let ot = Date.now() / 400;
               let pulse = 1 + 0.15 * Math.sin(ot + (obs.orbPhase || 0));
@@ -5621,6 +5688,48 @@
           }
 
           // Portals are generated within cyberpunk obstacle block above
+
+          // ── Guaranteed wall-side bumpers: one near left edge, one near right edge ──
+          // Prevents balls from cruising freely down the sides with no interaction
+          // Skip for frogger (has lane structure), tetris (fills whole width), and knives (fruit covers it)
+          if (type !== "frogger" && type !== "tetris") {
+            const bumperW = 60 + Math.random() * 40;
+            const bumperH = 14;
+            const bumperColor = BIOMES[type]
+              ? BIOMES[type].obsColor
+              : "#ffffff";
+            const leftY = y + 80 + Math.random() * 220;
+            const rightY = y + 180 + Math.random() * 160;
+            const leftBumper = Matter.Bodies.rectangle(
+              30 + bumperW / 2,
+              leftY,
+              bumperW,
+              bumperH,
+              {
+                isStatic: true,
+                friction: 0.05,
+                restitution: 0.5,
+                renderColor: bumperColor,
+                label: "platform",
+                angle: 0.18,
+              },
+            );
+            const rightBumper = Matter.Bodies.rectangle(
+              VIEW_WIDTH - 30 - bumperW / 2,
+              rightY,
+              bumperW,
+              bumperH,
+              {
+                isStatic: true,
+                friction: 0.05,
+                restitution: 0.5,
+                renderColor: bumperColor,
+                label: "platform",
+                angle: -0.18,
+              },
+            );
+            newObs.push(leftBumper, rightBumper);
+          }
 
           Matter.World.add(world, newObs);
           // Stamp each obstacle with its biome zone bounds so stray culling works
@@ -9019,8 +9128,8 @@
             const distAbove = cameraY - c.body.position.y;
             const distBelow = c.body.position.y - (cameraY + VIEW_HEIGHT * 0.6);
             if (
-              distAbove > VIEW_HEIGHT * 0.7 ||
-              distBelow > VIEW_HEIGHT * 0.5
+              distAbove > VIEW_HEIGHT * 1.5 ||
+              distBelow > VIEW_HEIGHT * 1.5
             ) {
               respawnCharacter(c);
             }
@@ -9274,8 +9383,7 @@
           activeHazards = [];
           SFX.playNoise(1.2, 0.5);
 
-          // Restore normal gravity
-          engine.gravity.y = 0.7;
+          // Restore normal gravity handled at sprint launch
           engine.timing.timeScale = 1.0;
 
           // Tag balls for fire effect immediately (so they look exciting right away)
@@ -9287,55 +9395,30 @@
             c.sprintStartY = c.body.position.y;
           });
 
-          // Small delay so camera can reframe before balls start moving hard
+          // Sprint: immediate launch, all balls same constant velocity, done in 3s
           sprintLaunched = false;
           _finishLineCrossed = false;
-          setTimeout(() => {
-            if (!gameActive) return;
-            sprintLaunched = true;
-            const SPRINT_SECS = 5.0;
-            const SPRINT_STEPS = SPRINT_SECS * 60;
-            const G = 0.7;
-            // Use the LEADER's distance for ALL balls — preserves race order
-            const leaderDist = Math.max(
-              200,
-              finishY - physicsLeader.body.position.y,
-            );
-            const sharedV0 = Math.max(
-              8,
-              (leaderDist - 0.5 * G * SPRINT_STEPS) / SPRINT_STEPS,
-            );
-            characters.forEach((c) => {
-              Matter.Body.setVelocity(c.body, {
-                x: c.body.velocity.x * 0.15,
-                y: sharedV0,
-              });
-              c.sprintVy = sharedV0;
-            });
-          }, 250);
+          // Turn off gravity so balls travel at exactly the velocity we set
+          engine.gravity.y = 0;
+          const SPRINT_SECS = 3.0;
+          const SPRINT_FRAMES = SPRINT_SECS * 60;
+          const leaderDist = Math.max(
+            300,
+            finishY - physicsLeader.body.position.y,
+          );
+          const sprintV = leaderDist / SPRINT_FRAMES; // constant px/frame for leader
+          characters.forEach((c) => {
+            Matter.Body.setVelocity(c.body, { x: 0, y: sprintV });
+            c.sprintVy = sprintV;
+          });
+          sprintLaunched = true;
         }
 
-        // Each frame during sprint: keep all balls moving at the same pace
-        // Uses leader's remaining distance so relative positions are preserved
+        // Each frame during sprint: lock every ball to exactly sprintVy
         if (suddenDeath && sprintLaunched) {
-          const timeElapsed = Math.max(
-            0,
-            (Date.now() - sprintStartTime - 250) / 1000,
-          );
-          const timeRemain = Math.max(0.3, 5.5 - timeElapsed);
-          const leaderDistLeft = finishY - physicsLeader.body.position.y;
-          const sharedNeededVy =
-            leaderDistLeft > 0 ? leaderDistLeft / (timeRemain * 60) : 0;
           characters.forEach((c) => {
-            if (!c.sprintVy) return;
-            if (finishY - c.body.position.y <= 0) return;
-            // All balls get the same vertical nudge — leader stays leader
-            if (c.body.velocity.y < sharedNeededVy * 0.65) {
-              Matter.Body.setVelocity(c.body, {
-                x: c.body.velocity.x * 0.85, // damp horizontal drift during sprint
-                y: sharedNeededVy,
-              });
-            }
+            if (!c.sprintVy || finishY - c.body.position.y <= 0) return;
+            Matter.Body.setVelocity(c.body, { x: 0, y: c.sprintVy });
           });
         }
 
@@ -9360,19 +9443,24 @@
         let targetTimeScale = 1.0;
 
         if (suddenDeath && sprintLaunched) {
-          // SPRINT: zoom in continuously toward finish
-          const sprintElapsed = (Date.now() - sprintStartTime) / 1000;
-          const sprintZoom = Math.min(2.0, 1.0 + sprintElapsed * 0.15);
-          targetZoom = sprintZoom;
-          if (distToFinish > 0 && distToFinish < 1200) {
-            const t2 = 1.0 - distToFinish / 1200;
-            targetZoom = Math.max(sprintZoom, 1.5 + t2 * 1.5);
-            targetTimeScale = Math.max(0.4, 1.0 - t2 * 0.6); // never below 0.4x — stays fast enough
-          }
-        } else if (distToFinish > 0 && distToFinish < 800 && !suddenDeath) {
-          let t2 = 1.0 - Math.max(0, distToFinish - 80) / 720;
-          targetZoom = 1.0 + t2 * 2.8;
-          targetTimeScale = Math.max(0.25, 1.0 - t2 * 0.75);
+          // Sprint: zoom toward leader the closer they get to the finish
+          // At start: zoom 1.5x, at finish line: zoom 3.5x. No slow-mo — sprint is fast.
+          const t2 = Math.max(
+            0,
+            Math.min(
+              1,
+              1.0 -
+                distToFinish /
+                  Math.max(
+                    1,
+                    physicsLeader.sprintStartY
+                      ? finishY - physicsLeader.sprintStartY
+                      : 3000,
+                  ),
+            ),
+          );
+          targetZoom = 1.5 + t2 * 2.0; // 1.5 → 3.5
+          targetTimeScale = 1.0; // full speed
         }
 
         if (!suddenDeath && distToFinish > 1200) {
@@ -9391,20 +9479,20 @@
 
         let targetCameraY;
         if (suddenDeath && sprintLaunched) {
-          // Pin physicsLeader at exactly 30% from the top — hardcoded, no lerp issues
+          // Sprint: leader locked at top 25% so finish line is visible below
           targetCameraY =
-            physicsLeader.body.position.y + effectiveViewHeight * (-0.5 + 0.3);
+            physicsLeader.body.position.y + effectiveViewHeight * (-0.5 + 0.25);
         } else {
-          targetCameraY = cameraLeader.body.position.y;
+          // Normal race: ALWAYS centre on physicsLeader — no clamping, no lag
+          targetCameraY = physicsLeader.body.position.y;
         }
 
-        targetCameraY = Math.max(
-          effectiveViewHeight / 2,
-          Math.min(finishY + effectiveViewHeight * 0.1, targetCameraY),
-        );
+        // Only clamp so camera doesn't go above world top
+        targetCameraY = Math.max(effectiveViewHeight / 2, targetCameraY);
 
-        // Sprint: instant camera snap to leader — no lerp lag that loses them
-        const camSpeed = suddenDeath && sprintLaunched ? 1.0 : 0.1;
+        // Normal race: fast lerp (0.25) so camera stays close to leader
+        // Sprint: instant snap (1.0) — leader must never leave viewport
+        const camSpeed = suddenDeath && sprintLaunched ? 1.0 : 0.25;
         cameraY += (targetCameraY - cameraY) * camSpeed;
 
         ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -9413,11 +9501,8 @@
         ctx.save();
 
         let targetOffsetX = (canvas.width - VIEW_WIDTH * finalScale) / 2;
-        let xSnapStrength = distToFinish < 1800 ? 0.18 : 0.1;
         if (currentZoom > 1.05) {
-          // During sprint: center on physicsLeader. Normal race: center on cameraLeader.
-          const xTarget =
-            suddenDeath && sprintLaunched ? physicsLeader : cameraLeader;
+          const xTarget = physicsLeader;
           targetOffsetX =
             canvas.width / 2 - xTarget.body.position.x * finalScale;
           targetOffsetX = Math.max(
@@ -9425,8 +9510,7 @@
             Math.min(0, targetOffsetX),
           );
         }
-        // Sprint: instant X snap so leader is always centred
-        const xSpeed = suddenDeath && sprintLaunched ? 1.0 : xSnapStrength;
+        const xSpeed = suddenDeath && sprintLaunched ? 1.0 : 0.15;
         cameraXOffset += (targetOffsetX - cameraXOffset) * xSpeed;
 
         // Decay mine shake
@@ -9623,36 +9707,38 @@
           ctx.fillRect(0, fadeTop, VIEW_WIDTH, fadeH);
         });
 
-        // ── FINISH LINE ── always drawn, very visible
-        const fLabelY = finishY - 60;
-        // Glow effect behind the line
-        const fGlow = ctx.createLinearGradient(
-          0,
-          fLabelY - 40,
-          0,
-          fLabelY + 70,
-        );
-        fGlow.addColorStop(0, "rgba(255,255,0,0)");
-        fGlow.addColorStop(0.4, "rgba(255,255,0,0.18)");
-        fGlow.addColorStop(1, "rgba(255,255,0,0)");
-        ctx.fillStyle = fGlow;
-        ctx.fillRect(0, fLabelY - 40, VIEW_WIDTH, 110);
-        // Checkerboard stripe
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(0, fLabelY, VIEW_WIDTH, 60);
-        ctx.fillStyle = "#000000";
-        for (let ci = 0; ci < VIEW_WIDTH; ci += 60) {
-          ctx.fillRect(ci, fLabelY, 30, 30);
-          ctx.fillRect(ci + 30, fLabelY + 30, 30, 30);
-        }
-        // "FINISH" banner text
-        ctx.fillStyle = "rgba(255,255,255,0.97)";
-        ctx.font = "bold 80px Arial";
-        ctx.textAlign = "center";
-        ctx.strokeStyle = "rgba(0,0,0,0.85)";
-        ctx.lineWidth = 8;
-        ctx.strokeText("FINISH", VIEW_WIDTH / 2, fLabelY - 16);
-        ctx.fillText("FINISH", VIEW_WIDTH / 2, fLabelY - 16);
+        // ── FINISH LINE ── only visible during sprint
+        if (suddenDeath) {
+          const fLabelY = finishY - 60;
+          // Glow effect behind the line
+          const fGlow = ctx.createLinearGradient(
+            0,
+            fLabelY - 40,
+            0,
+            fLabelY + 70,
+          );
+          fGlow.addColorStop(0, "rgba(255,255,0,0)");
+          fGlow.addColorStop(0.4, "rgba(255,255,0,0.18)");
+          fGlow.addColorStop(1, "rgba(255,255,0,0)");
+          ctx.fillStyle = fGlow;
+          ctx.fillRect(0, fLabelY - 40, VIEW_WIDTH, 110);
+          // Checkerboard stripe
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, fLabelY, VIEW_WIDTH, 60);
+          ctx.fillStyle = "#000000";
+          for (let ci = 0; ci < VIEW_WIDTH; ci += 60) {
+            ctx.fillRect(ci, fLabelY, 30, 30);
+            ctx.fillRect(ci + 30, fLabelY + 30, 30, 30);
+          }
+          // "FINISH" banner text
+          ctx.fillStyle = "rgba(255,255,255,0.97)";
+          ctx.font = "bold 80px Arial";
+          ctx.textAlign = "center";
+          ctx.strokeStyle = "rgba(0,0,0,0.85)";
+          ctx.lineWidth = 8;
+          ctx.strokeText("FINISH", VIEW_WIDTH / 2, fLabelY - 16);
+          ctx.fillText("FINISH", VIEW_WIDTH / 2, fLabelY - 16);
+        } // end if suddenDeath finish line
 
         // ── Draw intro platform (before physics bodies) ──
         if (introPhase === "holding" && introPlatformBodies.length > 0) {
@@ -10957,6 +11043,7 @@
 
       function endGame(winner) {
         gameActive = false;
+        engine.gravity.y = 0.7; // restore after sprint zeroed it
         Matter.Runner.stop(runner);
         // Music keeps playing through the winner cinematic and leaderboard
         // Restore gravity and flip state in case game ended mid-flip
