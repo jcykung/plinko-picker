@@ -1166,6 +1166,24 @@
         osc.stop(audioCtx.currentTime + 0.2);
       },
       zap: () => SFX.playTone(800, "sawtooth", 0.1, 0.05),
+      marioPipe: () => {
+        if (isSfxMuted || !audioCtx) return;
+        // Classic Mario pipe warp: descending chromatic run on square wave
+        const notes = [523.25, 493.88, 466.16, 440.0, 415.30, 392.0, 369.99, 349.23];
+        notes.forEach((freq, i) => {
+          const osc = audioCtx.createOscillator();
+          const gain = audioCtx.createGain();
+          osc.type = "square";
+          osc.frequency.value = freq;
+          const t0 = audioCtx.currentTime + i * 0.055;
+          gain.gain.setValueAtTime(0.0, t0);
+          gain.gain.linearRampToValueAtTime(0.14, t0 + 0.01);
+          gain.gain.setValueAtTime(0.14, t0 + 0.04);
+          gain.gain.linearRampToValueAtTime(0.0, t0 + 0.055);
+          osc.connect(gain); gain.connect(audioCtx._masterOut || audioCtx.destination);
+          osc.start(t0); osc.stop(t0 + 0.06);
+        });
+      },
       demonSlash: () => {
         if (isSfxMuted || !audioCtx) return;
         const now = audioCtx.currentTime;
@@ -2390,14 +2408,20 @@
 
 
 
+        // Cache Date.now() once per frame — used by blackhole and others
+        const _frameNow = Date.now();
+
         // Obstacle Animations
         levelObstacles.forEach((obs) => {
           if (obs.label === "spinner")
             Matter.Body.setAngle(obs, obs.angle + 0.05);
           else if (obs.label === "blackhole") {
+            // Skip entirely if this blackhole is far off-screen
+            if (Math.abs(obs.position.y - cameraY) > VIEW_HEIGHT * 1.2) return;
+
             Matter.Body.setAngle(obs, obs.angle - 0.05);
             const bhId = obs.bhId || (obs.bhId = Math.random());
-            const now = Date.now();
+            const now = _frameNow; // use cached timestamp, not Date.now() per blackhole
 
             // Count captured balls (max 2 allowed)
             let capturedCount = 0;
@@ -2406,74 +2430,69 @@
               if (capturedCount >= 2) break;
             }
 
-            characters.forEach((c) => {
-              let dx = obs.position.x - c.body.position.x;
-              let dy = obs.position.y - c.body.position.y;
-              let dist = Math.sqrt(dx * dx + dy * dy);
+            for (let _ci = 0; _ci < characters.length; _ci++) {
+              const c = characters[_ci];
+              // Fast axis-aligned pre-check before expensive hypot
+              const dx = obs.position.x - c.body.position.x;
+              const dy = obs.position.y - c.body.position.y;
+              if (Math.abs(dx) > 210 && Math.abs(dy) > 210) {
+                if (c.bhCapture) delete c.bhCapture[bhId];
+                continue;
+              }
+              const dist = Math.sqrt(dx * dx + dy * dy);
 
               if (!c.bhCapture) c.bhCapture = {};
               if (!c.bhCooldown) c.bhCooldown = {};
 
-              // Skip if this ball is on cooldown for this blackhole
-              if (c.bhCooldown[bhId] && now < c.bhCooldown[bhId]) return;
+              if (c.bhCooldown[bhId] && now < c.bhCooldown[bhId]) continue;
 
               if (dist < 200) {
-                // If already captured, handle release/orbit
                 if (c.bhCapture[bhId]) {
                   const trapped = now - c.bhCapture[bhId];
                   if (trapped > 1000) {
-                    // Release — kick ball outward
                     delete c.bhCapture[bhId];
                     c.bhCooldown[bhId] = now + 4000;
-                    createParticles(c.body.position.x, c.body.position.y, "#a855f7", 14);
-                    const outDx = c.body.position.x - obs.position.x;
-                    const outDy = c.body.position.y - obs.position.y;
-                    const outD = Math.hypot(outDx, outDy) || 1;
-                    Matter.Body.setVelocity(c.body, { x: (outDx / outD) * 10, y: (outDy / outD) * 10 });
+                    createParticles(c.body.position.x, c.body.position.y, "#a855f7", 8);
+                    const outD = Math.hypot(dx, dy) || 1;
+                    Matter.Body.setVelocity(c.body, { x: (-dx / outD) * 10, y: (-dy / outD) * 10 });
                   } else if (trapped < 200) {
-                    let forceMag = 0.00012 * (200 - dist);
+                    const forceMag = 0.00012 * (200 - dist);
                     Matter.Body.applyForce(c.body, c.body.position, { x: dx * forceMag, y: dy * forceMag });
                   } else {
-                    // Captured: dampen and hold in orbit
-                    Matter.Body.setVelocity(c.body, {
-                      x: c.body.velocity.x * 0.92,
-                      y: c.body.velocity.y * 0.92,
-                    });
-                    let forceMag = 0.00004 * (200 - dist);
+                    // Orbit dampen — only every other frame to halve cost
+                    if (frameCount % 2 === 0) {
+                      Matter.Body.setVelocity(c.body, { x: c.body.velocity.x * 0.92, y: c.body.velocity.y * 0.92 });
+                    }
+                    const forceMag = 0.00004 * (200 - dist);
                     Matter.Body.applyForce(c.body, c.body.position, { x: dx * forceMag, y: dy * forceMag });
                   }
+                } else if (capturedCount < 2) {
+                  c.bhCapture[bhId] = now;
+                  capturedCount++;
+                  const forceMag = 0.00012 * (200 - dist);
+                  Matter.Body.applyForce(c.body, c.body.position, { x: dx * forceMag, y: dy * forceMag });
                 } else {
-                  // Not yet captured — only pull in if under the cap of 2
-                  if (capturedCount < 2) {
-                    c.bhCapture[bhId] = now;
-                    let forceMag = 0.00012 * (200 - dist);
-                    Matter.Body.applyForce(c.body, c.body.position, { x: dx * forceMag, y: dy * forceMag });
-                  } else {
-                    // Cap reached — deflect this ball away instead
-                    const outDx = c.body.position.x - obs.position.x;
-                    const outDy = c.body.position.y - obs.position.y;
-                    const outD = Math.hypot(outDx, outDy) || 1;
-                    Matter.Body.applyForce(c.body, c.body.position, {
-                      x: (outDx / outD) * 0.003,
-                      y: (outDy / outD) * 0.003,
-                    });
-                    c.bhCooldown[bhId] = now + 2000; // short cooldown so it doesn't keep trying
-                  }
+                  const outD = Math.hypot(dx, dy) || 1;
+                  Matter.Body.applyForce(c.body, c.body.position, {
+                    x: (-dx / outD) * 0.003, y: (-dy / outD) * 0.003,
+                  });
+                  c.bhCooldown[bhId] = now + 2000;
                 }
               } else {
-                // Ball left pull radius — clear capture (cooldown stays if set)
-                delete c.bhCapture[bhId];
+                if (c.bhCapture) delete c.bhCapture[bhId];
               }
-            });
+            }
           } else if (obs.label === "asteroid") {
             if (obs.broken) return;
-            // Orbit the black hole
+            // Skip off-screen asteroids entirely
+            if (Math.abs(obs.orbitBhY - cameraY) > VIEW_HEIGHT * 1.2) return;
             obs.orbitAngle += obs.orbitSpeed;
             const newX = obs.orbitBhX + Math.cos(obs.orbitAngle) * obs.orbitR;
             const newY = obs.orbitBhY + Math.sin(obs.orbitAngle) * obs.orbitR * 0.55;
             Matter.Body.setPosition(obs, { x: newX, y: newY });
             Matter.Body.setAngle(obs, obs.orbitAngle * 1.4);
-            // Check collision with characters
+            // Check collision with characters — only every other frame
+            if (frameCount % 2 !== 0) return;
             characters.forEach((c) => {
               const d = Math.hypot(c.body.position.x - obs.position.x, c.body.position.y - obs.position.y);
               if (d < c.radius + obs.asteroidR) {
@@ -2522,13 +2541,22 @@
               Matter.Body.setVelocity(obs, { x: 0, y: 0 });
             }
           } else if (obs.label === "immune-cell") {
-            // B-cells: drift slowly, fire antibodies — rate-limited with global cap
-            if (!obs.driftAngle) obs.driftAngle = Math.random() * Math.PI * 2;
-            obs.driftAngle += (Math.random() - 0.5) * 0.10;
-            Matter.Body.applyForce(obs, obs.position, {
-              x: Math.cos(obs.driftAngle) * 0.000006,
-              y: Math.sin(obs.driftAngle) * 0.000006,
-            });
+            // B-cells: drift with setPosition (static body — immune to gravity)
+            obs.immuneX = (obs.immuneX !== undefined ? obs.immuneX : obs.position.x) + (obs.immuneVx || 0);
+            obs.immuneY = (obs.immuneY !== undefined ? obs.immuneY : obs.position.y) + (obs.immuneVy || 0);
+            // Gentle random steering
+            obs.immuneVx = (obs.immuneVx || 0) + (Math.random() - 0.5) * 0.04;
+            obs.immuneVy = (obs.immuneVy || 0) + (Math.random() - 0.5) * 0.03;
+            // Clamp speed
+            const icSpd = Math.hypot(obs.immuneVx, obs.immuneVy);
+            if (icSpd > 1.4) { obs.immuneVx *= 1.4 / icSpd; obs.immuneVy *= 1.4 / icSpd; }
+            // Bounce off zone edges
+            const icR = obs.circleRadius || 20;
+            if (obs.immuneX - icR < 10) { obs.immuneX = icR + 10; obs.immuneVx = Math.abs(obs.immuneVx); }
+            if (obs.immuneX + icR > VIEW_WIDTH - 10) { obs.immuneX = VIEW_WIDTH - icR - 10; obs.immuneVx = -Math.abs(obs.immuneVx); }
+            if (obs.immuneY < (obs._biomeStartY || 0) + icR + 10) { obs.immuneY = (obs._biomeStartY || 0) + icR + 10; obs.immuneVy = Math.abs(obs.immuneVy); }
+            if (obs.immuneY > (obs._biomeEndY || obs.immuneY + 1) - icR - 10) { obs.immuneY = (obs._biomeEndY || obs.immuneY + 1) - icR - 10; obs.immuneVy = -Math.abs(obs.immuneVy); }
+            Matter.Body.setPosition(obs, { x: obs.immuneX, y: obs.immuneY });
 
             // Count live antibodies — use a cached count updated every 60 frames
             obs.antibodyTimer = (obs.antibodyTimer || 0) + 1;
@@ -2566,16 +2594,20 @@
               }
             }
           } else if (obs.label === "macrophage") {
-            // Wander passively — random drift, mouth closed unless ball is very close
-            if (!obs.wanderAngle) obs.wanderAngle = Math.random() * Math.PI * 2;
-            obs.wanderAngle += (Math.random() - 0.5) * 0.12;
-            Matter.Body.applyForce(obs, obs.position, {
-              x: Math.cos(obs.wanderAngle) * 0.00018,
-              y: Math.sin(obs.wanderAngle) * 0.00018,
-            });
-            // Clamp speed
-            const macSpd = Math.hypot(obs.velocity.x, obs.velocity.y);
-            if (macSpd > 2.5) Matter.Body.setVelocity(obs, { x: obs.velocity.x * 0.85, y: obs.velocity.y * 0.85 });
+            // Wander with setPosition (static body — immune to gravity)
+            obs.immuneX = (obs.immuneX !== undefined ? obs.immuneX : obs.position.x) + (obs.immuneVx || 0);
+            obs.immuneY = (obs.immuneY !== undefined ? obs.immuneY : obs.position.y) + (obs.immuneVy || 0);
+            obs.immuneVx = (obs.immuneVx || 0) + (Math.random() - 0.5) * 0.06;
+            obs.immuneVy = (obs.immuneVy || 0) + (Math.random() - 0.5) * 0.04;
+            const macWSpd = Math.hypot(obs.immuneVx, obs.immuneVy);
+            if (macWSpd > 1.8) { obs.immuneVx *= 1.8 / macWSpd; obs.immuneVy *= 1.8 / macWSpd; }
+            // Bounce off zone edges
+            const macR2 = obs.circleRadius || 44;
+            if (obs.immuneX - macR2 < 10) { obs.immuneX = macR2 + 10; obs.immuneVx = Math.abs(obs.immuneVx); }
+            if (obs.immuneX + macR2 > VIEW_WIDTH - 10) { obs.immuneX = VIEW_WIDTH - macR2 - 10; obs.immuneVx = -Math.abs(obs.immuneVx); }
+            if (obs.immuneY < (obs._biomeStartY || 0) + macR2 + 10) { obs.immuneY = (obs._biomeStartY || 0) + macR2 + 10; obs.immuneVy = Math.abs(obs.immuneVy); }
+            if (obs.immuneY > (obs._biomeEndY || obs.immuneY + 1) - macR2 - 10) { obs.immuneY = (obs._biomeEndY || obs.immuneY + 1) - macR2 - 10; obs.immuneVy = -Math.abs(obs.immuneVy); }
+            Matter.Body.setPosition(obs, { x: obs.immuneX, y: obs.immuneY });
 
             // Check for ball contact — eat on touch
             const macR = obs.circleRadius || 44;
@@ -3063,7 +3095,7 @@
                 c.pipeCooldown = 90;
                 createParticles(obs.position.x, pipeBottom, "#4ade80", 14);
                 createParticles(obs.position.x, pipeBottom, "#86efac", 8);
-                SFX_PLAY(() => SFX.playTone(220, "sawtooth", 0.25, 0.15));
+                SFX_PLAY(() => SFX.marioPipe());
               }
             });
             // Ambient steam puffs from pipe top
@@ -3268,40 +3300,7 @@
             Matter.Body.setPosition(obs, { x: obs.tetX, y: obs.tetY });
 
             // Smash when pieces collide — only check every 4 frames to avoid O(n²) lag
-            if (frameCount % 4 === 0) levelObstacles.forEach((other) => {
-              if (other === obs || other.label !== "tetromino" || other.tetBroken) return;
-              if (other._biomeStartY !== obs._biomeStartY) return;
-              const dx5 = obs.tetX - (other.tetX || other.position.x);
-              const dy5 = obs.tetY - (other.tetY || other.position.y);
-              const dist5 = Math.hypot(dx5, dy5);
-              const myHalf = Math.max(obs.bounds.max.x - obs.bounds.min.x, obs.bounds.max.y - obs.bounds.min.y) / 2;
-              const otherHalf = Math.max(other.bounds.max.x - other.bounds.min.x, other.bounds.max.y - other.bounds.min.y) / 2;
-              if (dist5 < myHalf + otherHalf - 8) {
-                [obs, other].forEach((piece) => {
-                  if (piece.tetBroken) return;
-                  piece.tetBroken = true;
-                  const def = piece.tetDef;
-                  const cell = piece.tetCell || 32;
-                  const ox = piece.position.x - (def.w * cell) / 2;
-                  const oy = piece.position.y - (def.h * cell) / 2;
-                  def.cells.forEach(([cx3, cy3]) => {
-                    particles.push({
-                      x: ox + cx3 * cell + cell / 2,
-                      y: oy + cy3 * cell + cell / 2,
-                      vx: (Math.random() - 0.5) * 8,
-                      vy: (Math.random() - 0.5) * 8 - 3,
-                      life: 0.9, color: def.color,
-                      isTetroCel: true, celSize: cell,
-                    });
-                  });
-                  createParticles(piece.position.x, piece.position.y, def.color, 8);
-                  Matter.World.remove(world, piece);
-                });
-                // No sound — removed beeping
-              }
-            }); // end frameCount % 4 smash check
-
-            // Ball hits I-piece → shatter; other pieces → ball bounces naturally
+            // Ball hits ANY tetromino → shatter into individual mino cells
             characters.forEach((c) => {
               if (obs.tetBroken) return;
               const dx6 = c.body.position.x - obs.position.x;
@@ -3309,39 +3308,31 @@
               const hw6 = (obs.bounds.max.x - obs.bounds.min.x) / 2;
               const hh6 = (obs.bounds.max.y - obs.bounds.min.y) / 2;
               if (Math.abs(dx6) < hw6 + c.radius + 2 && Math.abs(dy6) < hh6 + c.radius + 2) {
-                if (obs.isIPiece) {
-                  obs.tetBroken = true;
-                  const def = obs.tetDef;
-                  const cell = obs.tetCell || 32;
-                  const rot = obs.angle;
-                  def.cells.forEach(([cx7, cy7]) => {
-                    const localX = cx7 * cell - (def.w * cell) / 2 + cell / 2;
-                    const localY = cy7 * cell - (def.h * cell) / 2 + cell / 2;
-                    const worldX = obs.position.x + localX * Math.cos(rot) - localY * Math.sin(rot);
-                    const worldY = obs.position.y + localX * Math.sin(rot) + localY * Math.cos(rot);
-                    particles.push({
-                      x: worldX, y: worldY,
-                      vx: (Math.random() - 0.5) * 10 + c.body.velocity.x * 0.3,
-                      vy: (Math.random() - 0.5) * 10 - 4,
-                      life: 1.1, color: def.color,
-                      isTetroCel: true, celSize: cell,
-                    });
+                obs.tetBroken = true;
+                const def = obs.tetDef;
+                const cell = obs.tetCell || 32;
+                const rot = obs.angle;
+                def.cells.forEach(([cx7, cy7]) => {
+                  const localX = cx7 * cell - (def.w * cell) / 2 + cell / 2;
+                  const localY = cy7 * cell - (def.h * cell) / 2 + cell / 2;
+                  const worldX = obs.position.x + localX * Math.cos(rot) - localY * Math.sin(rot);
+                  const worldY = obs.position.y + localX * Math.sin(rot) + localY * Math.cos(rot);
+                  particles.push({
+                    x: worldX, y: worldY,
+                    vx: (Math.random() - 0.5) * 10 + c.body.velocity.x * 0.3,
+                    vy: (Math.random() - 0.5) * 10 - 4,
+                    life: 1.1, color: def.color,
+                    isTetroCel: true, celSize: cell,
                   });
-                  createParticles(obs.position.x, obs.position.y, "#00f0f0", 14);
-                  Matter.World.remove(world, obs);
-                  // No sound
-                } else {
-                  // Non-I: bounce ball off — static body won't react, so push ball away manually
-                  if (c.sliceCooldown > 0) return;
-                  const nx = dx6 / (Math.hypot(dx6, dy6) || 1);
-                  const ny = dy6 / (Math.hypot(dx6, dy6) || 1);
-                  const spd = Math.hypot(c.body.velocity.x, c.body.velocity.y);
-                  Matter.Body.setVelocity(c.body, {
-                    x: nx * Math.max(spd, 8),
-                    y: ny * Math.max(spd, 8),
-                  });
-                  c.sliceCooldown = 10;
-                }
+                });
+                createParticles(obs.position.x, obs.position.y, def.color, 10);
+                Matter.World.remove(world, obs);
+                // Bounce ball away
+                const spd6 = Math.hypot(dx6, dy6) || 1;
+                Matter.Body.setVelocity(c.body, {
+                  x: (dx6 / spd6) * Math.max(Math.hypot(c.body.velocity.x, c.body.velocity.y), 10),
+                  y: (dy6 / spd6) * Math.max(Math.hypot(c.body.velocity.x, c.body.velocity.y), 10),
+                });
               }
             });
           } else if (obs.label === "pre-rocket") {
@@ -3934,28 +3925,33 @@
           sign.neonText = signs[Math.floor(Math.random() * signs.length)];
           newObs.push(sign);
         } else if (type === "immune") {
-          // Dense swarm of B-cells + 2 macrophages
-          const numCells = 6 + Math.floor(Math.random() * 4);
+          // Dense swarm of B-cells spread across the FULL cluster height
+          const numCells = 16 + Math.floor(Math.random() * 6);
           for (let ci = 0; ci < numCells; ci++) {
-            const cx = 60 + Math.random() * (VIEW_WIDTH - 120);
-            const cy = y + Math.random() * 300;
+            const cx = 40 + Math.random() * (VIEW_WIDTH - 80);
+            const cy = y + (ci / numCells) * 400 + Math.random() * 20;
             const cell = Matter.Bodies.circle(cx, cy, 18 + Math.random() * 10, {
-              isStatic: false, isSensor: true,
+              isStatic: true, isSensor: true,   // static — gravity cannot drag them out
               renderColor: "#fda4af", label: "immune-cell",
             });
-            cell.frictionAir = 0.08;
+            cell.immuneX = cx; cell.immuneY = cy;
+            cell.immuneVx = (Math.random() - 0.5) * 1.2;
+            cell.immuneVy = (Math.random() - 0.5) * 0.8;
             cell.antibodyTimer = Math.floor(Math.random() * 30);
             cell.antibodyPhase = Math.random() * Math.PI * 2;
             newObs.push(cell);
           }
-          // 2 macrophages per cluster
-          for (let mi = 0; mi < 2; mi++) {
-            const macX = 120 + Math.random() * (VIEW_WIDTH - 240);
-            const mac = Matter.Bodies.circle(macX, y + 100 + mi * 160, 44, {
-              isStatic: false, isSensor: true,
+          // 3 macrophages per cluster, spread vertically
+          for (let mi = 0; mi < 3; mi++) {
+            const macX = 100 + Math.random() * (VIEW_WIDTH - 200);
+            const macY = y + 60 + mi * 130;
+            const mac = Matter.Bodies.circle(macX, macY, 44, {
+              isStatic: true, isSensor: true,   // static — gravity cannot drag them out
               renderColor: "#be123c", label: "macrophage",
             });
-            mac.frictionAir = 0.07;
+            mac.immuneX = macX; mac.immuneY = macY;
+            mac.immuneVx = (Math.random() - 0.5) * 0.8;
+            mac.immuneVy = (Math.random() - 0.5) * 0.5;
             mac.mouthOpen = 0;
             newObs.push(mac);
           }
@@ -4021,22 +4017,26 @@
             newObs.push(f1c);
           }
         } else if (type === "snake") {
-          // Snake head sensor — managed entirely in the animation loop
-          const snakeHead = Matter.Bodies.circle(
-            200 + Math.random() * (VIEW_WIDTH - 400), y + 200, 14, {
-            isStatic: true, isSensor: false, // solid — balls bounce off
-            restitution: 0.8, friction: 0.0,
-            renderColor: "#4ade80", label: "snake-head",
-          });
-          snakeHead.snakeX = snakeHead.position.x;
-          snakeHead.snakeY = snakeHead.position.y;
-          snakeHead.snakeDirX = 5; snakeHead.snakeDirY = 0;
-          snakeHead.snakeLen = 28; // long by default
-          snakeHead.snakeBody = [];
-          snakeHead.snakeTurnTimer = 0;
-          snakeHead.snakeZoneY = y;
-          snakeHead.snakeZoneBot = y + 900;
-          newObs.push(snakeHead);
+          // Spawn 4 snakes per cluster, spread across full height
+          const snakeColors = ["#4ade80", "#22d3ee", "#f87171", "#fbbf24"];
+          for (let si2 = 0; si2 < 4; si2++) {
+            const snakeHead = Matter.Bodies.circle(
+              100 + Math.random() * (VIEW_WIDTH - 200), y + 50 + si2 * 90, 14, {
+              isStatic: true, isSensor: false,
+              restitution: 0.8, friction: 0.0,
+              renderColor: snakeColors[si2 % snakeColors.length], label: "snake-head",
+            });
+            snakeHead.snakeX = snakeHead.position.x;
+            snakeHead.snakeY = snakeHead.position.y;
+            snakeHead.snakeDirX = si2 % 2 === 0 ? 5 : -5; snakeHead.snakeDirY = 0;
+            snakeHead.snakeLen = 20 + Math.floor(Math.random() * 16);
+            snakeHead.snakeBody = [];
+            snakeHead.snakeTurnTimer = Math.floor(Math.random() * 40);
+            snakeHead.snakeZoneY = y;
+            snakeHead.snakeZoneBot = y + 420;
+            snakeHead.snakeColor = snakeColors[si2 % snakeColors.length];
+            newObs.push(snakeHead);
+          }
         } else if (type === "smash") {
           // Floating smash platforms that drift
           let np = 2 + Math.floor(Math.random() * 2);
@@ -4314,7 +4314,7 @@
           };
           const TKEYS = Object.keys(TETROMINOS);
           const CELL = 32;
-          const numPieces = 20 + Math.floor(Math.random() * 5);
+          const numPieces = 22 + Math.floor(Math.random() * 6);
           const sectionH = 420; // matches y += 420 loop step
           for (let ti = 0; ti < numPieces; ti++) {
             const tKey = TKEYS[Math.floor(Math.random() * TKEYS.length)];
@@ -4642,6 +4642,33 @@
         }
 
         ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.setLineDash([]);
+        ctx.restore();
+      }
+
+      // ── Microverse (Immune) background ──
+      if (biomeType === "immune") {
+        ctx.save();
+        const imTop = Math.max(biomeStartY, visTop), imBot = Math.min(biomeEndY, visBot);
+        if (imBot > imTop) {
+          // Deep magenta body-interior gradient
+          const imG = ctx.createLinearGradient(0, imTop, 0, imBot);
+          imG.addColorStop(0, "#4a0020"); imG.addColorStop(0.5, "#831843"); imG.addColorStop(1, "#500025");
+          ctx.fillStyle = imG; ctx.fillRect(0, imTop, W, imBot - imTop);
+
+          // Pulsing cell-membrane rings in background
+          ctx.globalAlpha = 0.06;
+          const ringSeeds = [1, 2, 3, 4, 5, 6];
+          ringSeeds.forEach(s => {
+            const rx2 = (s * 197 + biomeStartY * 0.01) % W;
+            const ry2 = biomeStartY + (s * 313) % (biomeEndY - biomeStartY);
+            if (ry2 < imTop - 80 || ry2 > imBot + 80) return;
+            const pulse2 = 0.7 + 0.3 * Math.sin(t * 1.2 + s * 1.7);
+            const r2 = (60 + s * 30) * pulse2;
+            ctx.strokeStyle = "#f9a8d4"; ctx.lineWidth = 2;
+            ctx.beginPath(); ctx.arc(rx2, ry2, r2, 0, Math.PI * 2); ctx.stroke();
+          });
+          ctx.globalAlpha = 1;
+        }
         ctx.restore();
       }
 
