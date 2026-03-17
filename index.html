@@ -1418,21 +1418,21 @@
         zap: () => SFX.playTone(800, "sawtooth", 0.1, 0.05),
         marioPipe: () => {
           if (isSfxMuted || !audioCtx) return;
-          // Classic Mario pipe warp: short descending two-note "doo-doop" on square wave
-          // High note then low note — exactly like the original
+          // Fun bright pipe warp: quick two-note ascending chirp on square wave
+          // Inspired by Mario but lighter and more satisfying
+          const t = audioCtx.currentTime;
           const notes = [
-            { freq: 130.81, start: 0, dur: 0.12 }, // C3 — first note
-            { freq: 98.0, start: 0.12, dur: 0.18 }, // G2 — lower note, slightly longer
+            { freq: 523.25, start: 0, dur: 0.07 }, // C5
+            { freq: 659.25, start: 0.07, dur: 0.09 }, // E5 — brighter finish
           ];
           notes.forEach(({ freq, start, dur }) => {
             const osc = audioCtx.createOscillator();
             const gain = audioCtx.createGain();
             osc.type = "square";
             osc.frequency.value = freq;
-            const t0 = audioCtx.currentTime + start;
-            gain.gain.setValueAtTime(0.18, t0);
-            gain.gain.setValueAtTime(0.18, t0 + dur - 0.02);
-            gain.gain.linearRampToValueAtTime(0.0, t0 + dur);
+            const t0 = t + start;
+            gain.gain.setValueAtTime(0.12, t0);
+            gain.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
             osc.connect(gain);
             gain.connect(audioCtx._masterOut || audioCtx.destination);
             osc.start(t0);
