@@ -869,7 +869,7 @@
     let introBreakTime = 0;
 
     // Particle cap — prevents lag spikes in dense biomes
-    const MAX_PARTICLES = 280;
+    const MAX_PARTICLES = 160;
 
     const EMOJIS = [
       "🐶",
@@ -1029,14 +1029,14 @@
       },
 
       knives: {
-        name: "Blade Room",
+        name: "Fruit Ninja",
         bg: "#0c0c0c",
         obsColor: "#e2e8f0",
         musicScale: [110.0, 130.81, 164.81, 196.0, 220.0],
       },
       frogger: {
         name: "Frogger Highway",
-        bg: "#14380a",
+        bg: "#1c1c1c",
         obsColor: "#4ade80",
         musicScale: [220.0, 261.63, 329.63, 392.0, 440.0],
       },
@@ -1051,6 +1051,12 @@
         bg: "#1a0800",
         obsColor: "#f97316",
         musicScale: [220.0, 246.94, 261.63, 293.66, 329.63],
+      },
+      tetris: {
+        name: "Tetris Zone",
+        bg: "#0d0d1a",
+        obsColor: "#00f0f0",
+        musicScale: [261.63, 329.63, 392.0, 440.0, 523.25],
       },
     };
 
@@ -2241,7 +2247,7 @@
               }
             } else if (charBiome.type === "knives") {
               // Spawn fruits more generously — fill the biome with fruit right away
-              if (Math.random() < 0.035 && fruitNinjaFruits.filter(f => !f.sliced).length < 20) {
+              if (Math.random() < 0.035 && fruitNinjaFruits.length < 24) {
                 const fKey = FRUIT_TYPE_KEYS[Math.floor(Math.random() * FRUIT_TYPE_KEYS.length)];
                 const spawnX = 80 + Math.random() * (VIEW_WIDTH - 160);
                 fruitNinjaFruits.push({
@@ -2259,6 +2265,13 @@
               Matter.Body.applyForce(c.body, c.body.position, { x: 0, y: 0.001 });
             } else if (charBiome.type === "frogger") {
               // Road lanes — cars handled via obstacle update; no extra force here
+            } else if (charBiome.type === "tetris") {
+              // Tetris zone — slight horizontal drift, pixel sparkles
+              if (Math.random() < 0.01) {
+                const colors = ["#00f0f0", "#f0f000", "#a000f0", "#00f000", "#f00000", "#0000f0", "#f0a000"];
+                createParticles(c.body.position.x, c.body.position.y,
+                  colors[Math.floor(Math.random() * colors.length)], 2);
+              }
             } else if (charBiome.type === "infinitycastle") {
               // Castle shifts gravity erratically — slight random horizontal nudges
               // and occasional structural "shift" that jolts the ball sideways
@@ -2386,8 +2399,12 @@
             const bhId = obs.bhId || (obs.bhId = Math.random());
             const now = Date.now();
 
-            // Count how many balls are currently captured by this black hole
-            const capturedCount = characters.filter(c => c.bhCapture && c.bhCapture[bhId]).length;
+            // Count captured balls (max 2 allowed)
+            let capturedCount = 0;
+            for (let _bi = 0; _bi < characters.length; _bi++) {
+              if (characters[_bi].bhCapture && characters[_bi].bhCapture[bhId]) capturedCount++;
+              if (capturedCount >= 2) break;
+            }
 
             characters.forEach((c) => {
               let dx = obs.position.x - c.body.position.x;
@@ -2513,10 +2530,12 @@
               y: Math.sin(obs.driftAngle) * 0.000006,
             });
 
-            // Count live (non-stuck) antibodies globally — hard cap to prevent lag
-            const liveAntibodies = levelObstacles.filter(o => o.label === "antibody" && !o.stuck).length;
+            // Count live antibodies — use a cached count updated every 60 frames
             obs.antibodyTimer = (obs.antibodyTimer || 0) + 1;
-            if (obs.antibodyTimer > 120 && liveAntibodies < 20) { // fire every ~2s max, global cap 20
+            if (!window._abCount || frameCount % 60 === 0) {
+              window._abCount = levelObstacles.filter(o => o.label === "antibody" && !o.stuck).length;
+            }
+            if (obs.antibodyTimer > 120 && window._abCount < 20) { // fire every ~2s max, global cap 20
               obs.antibodyTimer = 0;
               // Pick nearest ball only
               let nearest = null, nearestDist = Infinity;
@@ -2596,7 +2615,12 @@
                 const d = Math.hypot(c.body.position.x - obs.position.x, c.body.position.y - obs.position.y);
                 if (d < c.radius + 9) {
                   // Count how many antibodies are already stuck to this ball
-                  const alreadyStuck = levelObstacles.filter(o => o.label === "antibody" && o.stuck === c).length;
+                  // Count stuck antibodies on this ball (max 5)
+                  let alreadyStuck = 0;
+                  for (let _ai = 0; _ai < levelObstacles.length; _ai++) {
+                    if (levelObstacles[_ai].label === "antibody" && levelObstacles[_ai].stuck === c) alreadyStuck++;
+                    if (alreadyStuck >= 5) break;
+                  }
                   if (alreadyStuck >= 5) return;
                   obs.stuck = c;
                   obs.stuckOffset = { x: obs.position.x - c.body.position.x, y: obs.position.y - c.body.position.y };
@@ -2872,7 +2896,7 @@
             }
             // Record every 5px of movement for a smooth trail
             obs.snakeBody.unshift({ x: obs.snakeX, y: obs.snakeY });
-            const maxTrail = obs.snakeLen * 5;
+            const maxTrail = obs.snakeLen * 2;
             if (obs.snakeBody.length > maxTrail) obs.snakeBody.pop();
             obs.snakeX += obs.snakeDirX;
             obs.snakeY += obs.snakeDirY;
@@ -3220,6 +3244,104 @@
                 SFX.spring();
                 createParticles(partner.position.x, partner.position.y, partner.portalColor || "#a855f7", 24);
                 createParticles(obs.position.x, obs.position.y, obs.portalColor || "#f97316", 12);
+              }
+            });
+          } else if (obs.label === "tetromino") {
+            if (obs.tetBroken) return;
+
+            // Move manually (static body — immune to gravity)
+            obs.tetX = (obs.tetX !== undefined ? obs.tetX : obs.position.x) + obs.tetDriftVx;
+            obs.tetY = (obs.tetY !== undefined ? obs.tetY : obs.position.y) + obs.tetDriftVy;
+
+            // Bounce off left/right walls
+            const halfW2 = (obs.bounds.max.x - obs.bounds.min.x) / 2;
+            if (obs.tetX - halfW2 < 8) { obs.tetX = halfW2 + 8; obs.tetDriftVx = Math.abs(obs.tetDriftVx); }
+            if (obs.tetX + halfW2 > VIEW_WIDTH - 8) { obs.tetX = VIEW_WIDTH - halfW2 - 8; obs.tetDriftVx = -Math.abs(obs.tetDriftVx); }
+
+            // Bounce off biome top/bottom
+            const halfH2 = (obs.bounds.max.y - obs.bounds.min.y) / 2;
+            const zoneTop = (obs._biomeStartY || 0) + 30;
+            const zoneBot = (obs._biomeEndY || zoneTop + 5000) - 30;
+            if (obs.tetY - halfH2 < zoneTop) { obs.tetY = zoneTop + halfH2; obs.tetDriftVy = Math.abs(obs.tetDriftVy); }
+            if (obs.tetY + halfH2 > zoneBot) { obs.tetY = zoneBot - halfH2; obs.tetDriftVy = -Math.abs(obs.tetDriftVy); }
+
+            Matter.Body.setPosition(obs, { x: obs.tetX, y: obs.tetY });
+
+            // Smash when pieces collide — only check every 4 frames to avoid O(n²) lag
+            if (frameCount % 4 === 0) levelObstacles.forEach((other) => {
+              if (other === obs || other.label !== "tetromino" || other.tetBroken) return;
+              if (other._biomeStartY !== obs._biomeStartY) return;
+              const dx5 = obs.tetX - (other.tetX || other.position.x);
+              const dy5 = obs.tetY - (other.tetY || other.position.y);
+              const dist5 = Math.hypot(dx5, dy5);
+              const myHalf = Math.max(obs.bounds.max.x - obs.bounds.min.x, obs.bounds.max.y - obs.bounds.min.y) / 2;
+              const otherHalf = Math.max(other.bounds.max.x - other.bounds.min.x, other.bounds.max.y - other.bounds.min.y) / 2;
+              if (dist5 < myHalf + otherHalf - 8) {
+                [obs, other].forEach((piece) => {
+                  if (piece.tetBroken) return;
+                  piece.tetBroken = true;
+                  const def = piece.tetDef;
+                  const cell = piece.tetCell || 32;
+                  const ox = piece.position.x - (def.w * cell) / 2;
+                  const oy = piece.position.y - (def.h * cell) / 2;
+                  def.cells.forEach(([cx3, cy3]) => {
+                    particles.push({
+                      x: ox + cx3 * cell + cell / 2,
+                      y: oy + cy3 * cell + cell / 2,
+                      vx: (Math.random() - 0.5) * 8,
+                      vy: (Math.random() - 0.5) * 8 - 3,
+                      life: 0.9, color: def.color,
+                      isTetroCel: true, celSize: cell,
+                    });
+                  });
+                  createParticles(piece.position.x, piece.position.y, def.color, 8);
+                  Matter.World.remove(world, piece);
+                });
+                // No sound — removed beeping
+              }
+            }); // end frameCount % 4 smash check
+
+            // Ball hits I-piece → shatter; other pieces → ball bounces naturally
+            characters.forEach((c) => {
+              if (obs.tetBroken) return;
+              const dx6 = c.body.position.x - obs.position.x;
+              const dy6 = c.body.position.y - obs.position.y;
+              const hw6 = (obs.bounds.max.x - obs.bounds.min.x) / 2;
+              const hh6 = (obs.bounds.max.y - obs.bounds.min.y) / 2;
+              if (Math.abs(dx6) < hw6 + c.radius + 2 && Math.abs(dy6) < hh6 + c.radius + 2) {
+                if (obs.isIPiece) {
+                  obs.tetBroken = true;
+                  const def = obs.tetDef;
+                  const cell = obs.tetCell || 32;
+                  const rot = obs.angle;
+                  def.cells.forEach(([cx7, cy7]) => {
+                    const localX = cx7 * cell - (def.w * cell) / 2 + cell / 2;
+                    const localY = cy7 * cell - (def.h * cell) / 2 + cell / 2;
+                    const worldX = obs.position.x + localX * Math.cos(rot) - localY * Math.sin(rot);
+                    const worldY = obs.position.y + localX * Math.sin(rot) + localY * Math.cos(rot);
+                    particles.push({
+                      x: worldX, y: worldY,
+                      vx: (Math.random() - 0.5) * 10 + c.body.velocity.x * 0.3,
+                      vy: (Math.random() - 0.5) * 10 - 4,
+                      life: 1.1, color: def.color,
+                      isTetroCel: true, celSize: cell,
+                    });
+                  });
+                  createParticles(obs.position.x, obs.position.y, "#00f0f0", 14);
+                  Matter.World.remove(world, obs);
+                  // No sound
+                } else {
+                  // Non-I: bounce ball off — static body won't react, so push ball away manually
+                  if (c.sliceCooldown > 0) return;
+                  const nx = dx6 / (Math.hypot(dx6, dy6) || 1);
+                  const ny = dy6 / (Math.hypot(dx6, dy6) || 1);
+                  const spd = Math.hypot(c.body.velocity.x, c.body.velocity.y);
+                  Matter.Body.setVelocity(c.body, {
+                    x: nx * Math.max(spd, 8),
+                    y: ny * Math.max(spd, 8),
+                  });
+                  c.sliceCooldown = 10;
+                }
               }
             });
           } else if (obs.label === "pre-rocket") {
@@ -4020,71 +4142,116 @@
             newObs.push(pipe);
           }
         } else if (type === "frogger") {
-          // Classic Frogger layout: 2 road lanes + 1 river lane with logs
-          // Road lane 1
-          for (let ln = 0; ln < 2; ln++) {
-            const laneY = y + 60 + ln * 120;
-            const laneDir = ln % 2 === 0 ? 1 : -1;
-            const carSpeed = 3 + Math.random() * 3;
-            const carCount = 2 + Math.floor(Math.random() * 2);
-            const gap = (VIEW_WIDTH + 300) / carCount;
-            // Road surface stripe
-            newObs.push(Matter.Bodies.rectangle(VIEW_WIDTH / 2, laneY, VIEW_WIDTH, 2, {
-              isStatic: true, isSensor: true,
-              renderColor: "rgba(255,255,255,0.08)", label: "platform",
-            }));
-            for (let ci = 0; ci < carCount; ci++) {
-              const startX = laneDir > 0 ? -120 + ci * gap : VIEW_WIDTH + 120 - ci * gap;
-              const carColors = ["#ef4444", "#f97316", "#facc15", "#38bdf8", "#a78bfa"];
-              const carBody = Matter.Bodies.rectangle(startX, laneY, 90, 30, {
-                isStatic: true, isSensor: true,
-                renderColor: carColors[Math.floor(Math.random() * carColors.length)],
-                label: "road-car",
+          // ── Frogger cluster layout (420px tall, matches background exactly) ──
+          // River section:  y+0  .. y+130  (2 log lanes, centres y+28 and y+90)
+          // Grass median:   y+130 .. y+175
+          // Road section:   y+175 .. y+370 (3 car lanes, centres y+196, y+252, y+308)
+          // Bottom grass:   y+370 .. y+420
+
+          // ── River lane A (top) — logs drift right ──
+          {
+            const laneY = y + 28;
+            const logW = 110 + Math.floor(Math.random() * 50);
+            const logSpd = 1.8 + Math.random() * 1.0;
+            const logDir = 1;
+            const logCount = 3;
+            const gap = (VIEW_WIDTH + logW) / logCount;
+            for (let li = 0; li < logCount; li++) {
+              const lx = -logW + li * gap;
+              const lb = Matter.Bodies.rectangle(lx, laneY, logW, 30, {
+                isStatic: true, isSensor: true, renderColor: "#92400e", label: "frog-log"
               });
-              carBody.roadDir = laneDir; carBody.roadSpeed = carSpeed;
-              carBody.roadY = laneY; carBody.roadX = startX;
-              newObs.push(carBody);
+              lb.roadDir = logDir; lb.roadSpeed = logSpd; lb.roadY = laneY; lb.roadX = lx; lb.logW = logW;
+              newObs.push(lb);
             }
           }
-          // River lane with logs (slower, logs carry balls)
-          const riverY = y + 290;
-          const logDir = Math.random() < 0.5 ? 1 : -1;
-          const logSpeed = 1.5 + Math.random() * 1.5;
-          const logCount = 2 + Math.floor(Math.random() * 2);
-          const logGap = (VIEW_WIDTH + 400) / logCount;
-          for (let li = 0; li < logCount; li++) {
-            const logX = logDir > 0 ? -180 + li * logGap : VIEW_WIDTH + 180 - li * logGap;
-            const logW = 100 + Math.random() * 60;
-            const log = Matter.Bodies.rectangle(logX, riverY, logW, 24, {
-              isStatic: true, isSensor: true,
-              renderColor: "#92400e", label: "frog-log",
-            });
-            log.roadDir = logDir; log.roadSpeed = logSpeed;
-            log.roadY = riverY; log.roadX = logX;
-            log.logW = logW;
-            newObs.push(log);
+          // ── River lane B — logs drift left ──
+          {
+            const laneY = y + 90;
+            const logW = 90 + Math.floor(Math.random() * 60);
+            const logSpd = 1.4 + Math.random() * 1.2;
+            const logDir = -1;
+            const logCount = 2;
+            const gap = (VIEW_WIDTH + logW) / logCount;
+            for (let li = 0; li < logCount; li++) {
+              const lx = VIEW_WIDTH + logW - li * gap;
+              const lb = Matter.Bodies.rectangle(lx, laneY, logW, 30, {
+                isStatic: true, isSensor: true, renderColor: "#7c3310", label: "frog-log"
+              });
+              lb.roadDir = logDir; lb.roadSpeed = logSpd; lb.roadY = laneY; lb.roadX = lx; lb.logW = logW;
+              newObs.push(lb);
+            }
           }
-          // Safe strip between road and river (grass median)
-          newObs.push(Matter.Bodies.rectangle(VIEW_WIDTH / 2, y + 185, VIEW_WIDTH, 2, {
-            isStatic: true, isSensor: true,
-            renderColor: "rgba(74,222,128,0.15)", label: "platform",
-          }));
-          // Frog NPCs — hop across screen, deflect balls
-          const frogCount = 2 + Math.floor(Math.random() * 3);
-          for (let fn = 0; fn < frogCount; fn++) {
-            const frogX = Math.random() * VIEW_WIDTH;
-            const frogY = y + 170 + fn * 40;
-            const frog = Matter.Bodies.circle(frogX, frogY, 12, {
-              isStatic: true, isSensor: true,
-              renderColor: "#22c55e", label: "frog-npc",
-            });
-            frog.frogX = frogX; frog.frogY = frogY;
-            frog.frogDir = Math.random() < 0.5 ? 1 : -1;
-            frog.frogSpeed = 1.5 + Math.random() * 1.5;
-            frog.frogHopTimer = Math.floor(Math.random() * 40);
-            frog.frogHopOffset = 0;
-            frog.frogPhase = Math.random() * Math.PI * 2;
-            newObs.push(frog);
+
+          // ── Frog NPCs on the grass median ──
+          {
+            const medY = y + 152;
+            const frogCount = 2 + Math.floor(Math.random() * 2);
+            for (let fn = 0; fn < frogCount; fn++) {
+              const fx = 100 + fn * ((VIEW_WIDTH - 200) / (frogCount - 1 || 1));
+              const frog = Matter.Bodies.circle(fx, medY, 12, {
+                isStatic: true, isSensor: true, renderColor: "#22c55e", label: "frog-npc"
+              });
+              frog.frogX = fx; frog.frogY = medY;
+              frog.frogDir = fn % 2 === 0 ? 1 : -1;
+              frog.frogSpeed = 1.2 + Math.random();
+              frog.frogHopTimer = Math.floor(Math.random() * 40);
+              frog.frogHopOffset = 0;
+              newObs.push(frog);
+            }
+          }
+
+          // ── Road lane A — cars go right, fast ──
+          {
+            const laneY = y + 196;
+            const carW = 80; const carH = 36;
+            const spd = 5 + Math.random() * 3;
+            const count = 3 + Math.floor(Math.random() * 2);
+            const gap = (VIEW_WIDTH + carW * 2) / count;
+            const colors = ["#facc15", "#f59e0b", "#fbbf24"];
+            for (let ci = 0; ci < count; ci++) {
+              const cx = -carW + ci * gap;
+              const cb = Matter.Bodies.rectangle(cx, laneY, carW, carH, {
+                isStatic: true, isSensor: true, renderColor: colors[ci % colors.length], label: "road-car"
+              });
+              cb.roadDir = 1; cb.roadSpeed = spd; cb.roadY = laneY; cb.roadX = cx;
+              newObs.push(cb);
+            }
+          }
+          // ── Road lane B — trucks go left, slow ──
+          {
+            const laneY = y + 252;
+            const carW = 150; const carH = 38;
+            const spd = 2.5 + Math.random() * 1.5;
+            const count = 2;
+            const gap = (VIEW_WIDTH + carW * 2) / count;
+            const colors = ["#64748b", "#475569"];
+            for (let ci = 0; ci < count; ci++) {
+              const cx = VIEW_WIDTH + carW - ci * gap;
+              const cb = Matter.Bodies.rectangle(cx, laneY, carW, carH, {
+                isStatic: true, isSensor: true, renderColor: colors[ci % colors.length], label: "road-car"
+              });
+              cb.roadDir = -1; cb.roadSpeed = spd; cb.roadY = laneY; cb.roadX = cx;
+              cb.isTruck = true;
+              newObs.push(cb);
+            }
+          }
+          // ── Road lane C — cars go right, medium ──
+          {
+            const laneY = y + 308;
+            const carW = 82; const carH = 36;
+            const spd = 4 + Math.random() * 2;
+            const count = 3 + Math.floor(Math.random() * 2);
+            const gap = (VIEW_WIDTH + carW * 2) / count;
+            const colors = ["#f87171", "#ef4444", "#dc2626"];
+            for (let ci = 0; ci < count; ci++) {
+              const cx = -carW + ci * gap;
+              const cb = Matter.Bodies.rectangle(cx, laneY, carW, carH, {
+                isStatic: true, isSensor: true, renderColor: colors[ci % colors.length], label: "road-car"
+              });
+              cb.roadDir = 1; cb.roadSpeed = spd; cb.roadY = laneY; cb.roadX = cx;
+              newObs.push(cb);
+            }
           }
         } else if (type === "infinitycastle") {
           // Infinity Castle: Japanese cultural items as collidable obstacles
@@ -4133,6 +4300,46 @@
             demon.attacking = false;
             demon.attackAnim = 0;
             newObs.push(demon);
+          }
+        } else if (type === "tetris") {
+          // Spawn 20-24 tetromino pieces per section, densely packed across the zone
+          const TETROMINOS = {
+            I: { cells: [[0, 0], [1, 0], [2, 0], [3, 0]], color: "#00f0f0", w: 4, h: 1 },
+            O: { cells: [[0, 0], [1, 0], [0, 1], [1, 1]], color: "#f0f000", w: 2, h: 2 },
+            T: { cells: [[0, 0], [1, 0], [2, 0], [1, 1]], color: "#a000f0", w: 3, h: 2 },
+            S: { cells: [[1, 0], [2, 0], [0, 1], [1, 1]], color: "#00f000", w: 3, h: 2 },
+            Z: { cells: [[0, 0], [1, 0], [1, 1], [2, 1]], color: "#f00000", w: 3, h: 2 },
+            J: { cells: [[0, 0], [0, 1], [1, 1], [2, 1]], color: "#0000f0", w: 3, h: 2 },
+            L: { cells: [[2, 0], [0, 1], [1, 1], [2, 1]], color: "#f0a000", w: 3, h: 2 },
+          };
+          const TKEYS = Object.keys(TETROMINOS);
+          const CELL = 32;
+          const numPieces = 20 + Math.floor(Math.random() * 5);
+          const sectionH = 420; // matches y += 420 loop step
+          for (let ti = 0; ti < numPieces; ti++) {
+            const tKey = TKEYS[Math.floor(Math.random() * TKEYS.length)];
+            const tDef = TETROMINOS[tKey];
+            const px = 40 + Math.random() * (VIEW_WIDTH - 80);
+            const py = y + 10 + (ti / numPieces) * (sectionH - 20);
+            const rotations = [0, Math.PI * 0.5, Math.PI, Math.PI * 1.5];
+            const rot = rotations[Math.floor(Math.random() * rotations.length)];
+            const tw = tDef.w * CELL, th = tDef.h * CELL;
+            const isIpiece = tKey === "I";
+            const tetBody = Matter.Bodies.rectangle(px, py, tw, th, {
+              isStatic: true, isSensor: false,
+              friction: 0.0, restitution: 0.8,
+              renderColor: tDef.color, label: "tetromino",
+              angle: rot,
+            });
+            tetBody.tetKey = tKey;
+            tetBody.tetDef = tDef;
+            tetBody.tetCell = CELL;
+            tetBody.isIPiece = isIpiece;
+            tetBody.tetBroken = false;
+            tetBody.tetX = px; tetBody.tetY = py;
+            tetBody.tetDriftVx = (Math.random() < 0.5 ? 1 : -1) * (1.2 + Math.random() * 1.2);
+            tetBody.tetDriftVy = (Math.random() < 0.5 ? 1 : -1) * (0.4 + Math.random() * 0.5);
+            newObs.push(tetBody);
           }
         }
 
@@ -4358,70 +4565,83 @@
       // ── Frogger: road surface, river, grass strips, frog decorations ──
       if (biomeType === "frogger") {
         ctx.save();
-        // Obstacles spawn at y+60, y+180 (roads), y+290 (river) relative to zone y
-        // We draw full-width bands matching those positions
+        // Layout matches obstacle generation exactly (per 420px cluster):
+        //  clusterY+0   .. +130  → dark blue river (log lanes at +28, +90)
+        //  clusterY+130 .. +175  → bright green grass median
+        //  clusterY+175 .. +370  → black asphalt road (car lanes at +196, +252, +308)
+        //  clusterY+370 .. +420  → bright green grass strip
 
-        // ── Road section (dark asphalt) ──
-        const roadTop2 = biomeStartY;
-        const roadBot2 = Math.min(biomeStartY + 250, bot);
-        if (roadBot2 > Math.max(roadTop2, top)) {
-          ctx.fillStyle = "#292524";
-          ctx.fillRect(0, Math.max(roadTop2, top), W, roadBot2 - Math.max(roadTop2, top));
-          // Centre lane dash (between y+60 and y+180)
-          const dashY = biomeStartY + 120;
-          if (dashY > top && dashY < bot) {
-            ctx.strokeStyle = "rgba(255,220,50,0.3)"; ctx.lineWidth = 3;
-            ctx.setLineDash([28, 18]);
-            ctx.beginPath(); ctx.moveTo(0, dashY); ctx.lineTo(W, dashY); ctx.stroke();
+        const CLUSTER = 420;
+        const TILE_ORIGIN = biomeStartY + 200; // obstacle loop starts at startY+200
+        // Tile bands across the entire visible biome range
+        const tileStart = TILE_ORIGIN + Math.floor((top - TILE_ORIGIN) / CLUSTER) * CLUSTER - CLUSTER;
+        const tileEnd = Math.min(biomeEndY, bot + CLUSTER);
+
+        for (let cy = tileStart; cy < tileEnd; cy += CLUSTER) {
+          // ── River band (top 130px of cluster) ──
+          const riverY1 = cy, riverY2 = cy + 130;
+          const rTop = Math.max(riverY1, top), rBot = Math.min(riverY2, bot);
+          if (rBot > rTop) {
+            ctx.fillStyle = "#0a1a6e"; // deep arcade blue/black water
+            ctx.fillRect(0, rTop, W, rBot - rTop);
+            // Horizontal water-shimmer lines (lighter blue streaks)
+            ctx.strokeStyle = "rgba(80,140,255,0.28)"; ctx.lineWidth = 2;
+            for (let rl = 0; rl < 4; rl++) {
+              const ry = cy + 18 + rl * 26;
+              if (ry < top || ry > bot) continue;
+              const rx = ((t * 22 + rl * 97) % (W + 60)) - 30;
+              ctx.beginPath(); ctx.moveTo(rx, ry); ctx.lineTo(rx + 60, ry); ctx.stroke();
+            }
+            // Top bank (dark green lip)
+            if (riverY1 > top - 4 && riverY1 < bot + 4) {
+              ctx.fillStyle = "#14532d"; ctx.fillRect(0, Math.max(riverY1 - 3, top), W, 6);
+            }
+            // Bottom bank (dark green lip)
+            if (riverY2 > top - 4 && riverY2 < bot + 4) {
+              ctx.fillStyle = "#14532d"; ctx.fillRect(0, Math.max(riverY2 - 3, top), W, 6);
+            }
+          }
+
+          // ── Grass median (130..175) ──
+          const grassY1 = cy + 130, grassY2 = cy + 175;
+          const gTop = Math.max(grassY1, top), gBot = Math.min(grassY2, bot);
+          if (gBot > gTop) {
+            ctx.fillStyle = "#15803d"; // bright arcade green
+            ctx.fillRect(0, gTop, W, gBot - gTop);
+          }
+
+          // ── Road (175..370) ──
+          const roadY1 = cy + 175, roadY2 = cy + 370;
+          const rdTop = Math.max(roadY1, top), rdBot = Math.min(roadY2, bot);
+          if (rdBot > rdTop) {
+            ctx.fillStyle = "#1c1c1c"; // near-black tarmac
+            ctx.fillRect(0, rdTop, W, rdBot - rdTop);
+            // White edge lines (solid) at top and bottom of road
+            [cy + 178, cy + 367].forEach(ey => {
+              if (ey < top || ey > bot) return;
+              ctx.fillStyle = "#e5e5e5"; ctx.fillRect(0, ey, W, 3);
+            });
+            // Yellow dashed lane dividers between each pair of car lanes
+            // Lane A/B divider at cy+224, B/C divider at cy+280
+            ctx.strokeStyle = "#facc15"; ctx.lineWidth = 3;
+            ctx.setLineDash([32, 20]);
+            [cy + 224, cy + 280].forEach(dy => {
+              if (dy < top - 10 || dy > bot + 10) return;
+              ctx.beginPath(); ctx.moveTo(0, dy); ctx.lineTo(W, dy); ctx.stroke();
+            });
             ctx.setLineDash([]);
           }
-          // Road edge markings
-          [biomeStartY + 40, biomeStartY + 210].forEach(ey => {
-            if (ey < top || ey > bot) return;
-            ctx.fillStyle = "rgba(255,255,255,0.12)";
-            ctx.fillRect(0, ey - 1, W, 3);
-          });
-        }
 
-        // ── Grass median band ──
-        const medianY = biomeStartY + 250;
-        if (medianY > top - 40 && medianY < bot + 40) {
-          ctx.fillStyle = "#166534";
-          ctx.fillRect(0, Math.max(medianY - 30, top), W, Math.min(60, bot - Math.max(medianY - 30, top)));
-          // Deterministic grass tufts
-          ctx.fillStyle = "#15803d";
-          for (let gx2 = 8; gx2 < W; gx2 += 22) {
-            const gh = 4 + (gx2 * 7 % 6);
-            if (medianY > top && medianY < bot)
-              ctx.fillRect(gx2, medianY - 2, 4, gh);
+          // ── Bottom grass strip (370..420) ──
+          const botGrassY1 = cy + 370, botGrassY2 = cy + 420;
+          const bgTop = Math.max(botGrassY1, top), bgBot = Math.min(botGrassY2, bot);
+          if (bgBot > bgTop) {
+            ctx.fillStyle = "#15803d";
+            ctx.fillRect(0, bgTop, W, bgBot - bgTop);
           }
         }
 
-        // ── River section ──
-        const riverTop2 = biomeStartY + 260;
-        const riverBot2 = Math.min(biomeEndY, bot);
-        if (riverBot2 > Math.max(riverTop2, top)) {
-          const riverG2 = ctx.createLinearGradient(0, riverTop2, 0, riverBot2);
-          riverG2.addColorStop(0, "#1e40af");
-          riverG2.addColorStop(1, "#1e3a8a");
-          ctx.fillStyle = riverG2;
-          ctx.fillRect(0, Math.max(riverTop2, top), W, riverBot2 - Math.max(riverTop2, top));
-          // Animated water ripples
-          ctx.strokeStyle = "rgba(147,197,253,0.22)"; ctx.lineWidth = 2;
-          for (let rp = 0; rp < 10; rp++) {
-            const rx = ((rp * 157 + t * 28) % (W + 80)) - 40;
-            const ry = riverTop2 + 18 + (rp * 31) % 80;
-            if (ry < top || ry > bot) continue;
-            ctx.beginPath(); ctx.ellipse(rx, ry, 28 + (rp % 3) * 8, 5, 0, 0, Math.PI * 2); ctx.stroke();
-          }
-          // River bank line
-          if (riverTop2 > top && riverTop2 < bot) {
-            ctx.fillStyle = "#1d4437";
-            ctx.fillRect(0, riverTop2 - 2, W, 5);
-          }
-        }
-
-        ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+        ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.setLineDash([]);
         ctx.restore();
       }
 
@@ -4448,12 +4668,8 @@
             // Dark wood frame
             ctx.fillStyle = "#1a0700";
             ctx.fillRect(cx, cy, cw, ch);
-            // Glowing shoji interior (amber warmth)
-            const glow = ctx.createRadialGradient(cx + cw / 2, cy + ch / 2, 0, cx + cw / 2, cy + ch / 2, Math.max(cw, ch) * 0.7);
-            glow.addColorStop(0, `rgba(255,200,100,${glowAlpha * 0.95})`);
-            glow.addColorStop(0.5, `rgba(220,140,50,${glowAlpha * 0.6})`);
-            glow.addColorStop(1, `rgba(160,80,20,0)`);
-            ctx.fillStyle = glow;
+            // Flat amber fill instead of expensive radialGradient
+            ctx.fillStyle = `rgba(220,150,50,${glowAlpha * 0.75})`;
             ctx.fillRect(cx + beamThick, cy + beamThick, cw - beamThick * 2, ch - beamThick * 2);
             // Shoji grid overlay — vertical and horizontal dividers
             ctx.strokeStyle = `rgba(80,35,10,${glowAlpha * 1.4 + 0.2})`;
@@ -4624,7 +4840,33 @@
         }
       }
 
-      // ── Blade Room (Fruit Ninja dojo) ──
+      // ── Tetris Zone background ──
+      if (biomeType === "tetris") {
+        ctx.save();
+        const tzTop = Math.max(biomeStartY, visTop), tzBot = Math.min(biomeEndY, visBot);
+        if (tzBot > tzTop) {
+          // Dark grid background — classic Tetris playfield aesthetic
+          const tzG = ctx.createLinearGradient(0, tzTop, 0, tzBot);
+          tzG.addColorStop(0, "#0d0d1a"); tzG.addColorStop(1, "#0a0a14");
+          ctx.fillStyle = tzG;
+          ctx.fillRect(0, tzTop, W, tzBot - tzTop);
+          // Grid lines (subtle) — every 3 cells to reduce draw calls
+          ctx.strokeStyle = "rgba(30,30,60,0.6)"; ctx.lineWidth = 1;
+          const CELL2 = 28;
+          const gridStep = CELL2 * 3;
+          for (let gx4 = 0; gx4 < W; gx4 += gridStep) {
+            ctx.beginPath(); ctx.moveTo(gx4, tzTop); ctx.lineTo(gx4, tzBot); ctx.stroke();
+          }
+          for (let gy4 = biomeStartY - (biomeStartY % gridStep); gy4 < biomeEndY; gy4 += gridStep) {
+            if (gy4 < tzTop || gy4 > tzBot) continue;
+            ctx.beginPath(); ctx.moveTo(0, gy4); ctx.lineTo(W, gy4); ctx.stroke();
+          }
+          ctx.globalAlpha = 1;
+        }
+        ctx.restore();
+      }
+
+      // ── Fruit Ninja dojo ──
       if (biomeType === "knives") {
         ctx.save();
         // Deep dark background gradient
@@ -4674,7 +4916,7 @@
       if (biomeType === "space") {
         // Stars — deterministic scatter from seed based on biome position
         ctx.fillStyle = "rgba(255,255,255,0.85)";
-        for (let st = 0; st < 80; st++) {
+        for (let st = 0; st < 40; st++) {
           const sx = ((st * 347 + biomeStartY * 0.1) % W);
           const sy = biomeStartY + ((st * 211 + 7) % (biomeEndY - biomeStartY));
           if (sy < top - 2 || sy > bot + 2) continue;
@@ -4740,13 +4982,7 @@
           if (gy < top || gy > bot) continue;
           ctx.beginPath(); ctx.moveTo(0, gy); ctx.lineTo(W, gy); ctx.stroke();
         }
-        // Animated scanlines
-        ctx.globalAlpha = 0.04;
-        ctx.fillStyle = "#000";
-        const scanOffset = (t * 60) % 4;
-        for (let sy2 = top + scanOffset; sy2 < bot; sy2 += 4) {
-          ctx.fillRect(0, sy2, W, 2);
-        }
+        // Scanlines removed (perf)
         // Floating neon sign text (background decoration, not physics)
         const bgSigns = [["ENTER", 200, biomeStartY + 180], ["OVERRIDE", W - 180, biomeStartY + 380],
         ["ACCESS", 180, biomeStartY + 550], ["SYNC", W - 160, biomeStartY + 720]];
@@ -5738,6 +5974,49 @@
           ctx.restore();
           break;
         }
+        case "tetromino": {
+          if (body.tetBroken) break;
+          const def = body.tetDef;
+          if (!def) break;
+          const cell = body.tetCell || 28;
+          ctx.save();
+          ctx.translate(pos.x, pos.y);
+          ctx.rotate(body.angle);
+          const offX = -(def.w * cell) / 2;
+          const offY = -(def.h * cell) / 2;
+          // Draw each mino cell
+          def.cells.forEach(([cx8, cy8]) => {
+            const mx = offX + cx8 * cell;
+            const my = offY + cy8 * cell;
+            const inset = 2;
+            // Main face
+            ctx.fillStyle = def.color;
+            ctx.fillRect(mx + inset, my + inset, cell - inset * 2, cell - inset * 2);
+            // Light top/left highlight
+            ctx.fillStyle = "rgba(255,255,255,0.35)";
+            ctx.fillRect(mx + inset, my + inset, cell - inset * 2, 4);
+            ctx.fillRect(mx + inset, my + inset, 4, cell - inset * 2);
+            // Dark bottom/right shadow
+            ctx.fillStyle = "rgba(0,0,0,0.35)";
+            ctx.fillRect(mx + inset, my + cell - inset - 5, cell - inset * 2, 5);
+            ctx.fillRect(mx + cell - inset - 5, my + inset, 5, cell - inset * 2);
+            // Thin dark border
+            ctx.strokeStyle = "rgba(0,0,0,0.6)";
+            ctx.lineWidth = 1;
+            ctx.strokeRect(mx + inset, my + inset, cell - inset * 2, cell - inset * 2);
+          });
+          // I-piece border highlight (no shadow — too expensive with many pieces)
+          if (body.isIPiece) {
+            ctx.strokeStyle = "rgba(0,240,240,0.6)";
+            ctx.lineWidth = 2;
+            def.cells.forEach(([cx8, cy8]) => {
+              const mx = offX + cx8 * cell + 2, my = offY + cy8 * cell + 2;
+              ctx.strokeRect(mx, my, cell - 4, cell - 4);
+            });
+          }
+          ctx.restore();
+          break;
+        }
         case "pre-rocket": {
           ctx.save();
           ctx.translate(pos.x, pos.y);
@@ -6353,114 +6632,91 @@
         case "frog-log": {
           ctx.save();
           ctx.translate(pos.x, pos.y);
-          const lw = body.logW || hw * 2, lh2 = 24;
-          // Log body — wood grain
-          const logG = ctx.createLinearGradient(-lw / 2, -lh2 / 2, -lw / 2, lh2 / 2);
-          logG.addColorStop(0, "#b45309"); logG.addColorStop(0.4, "#92400e");
-          logG.addColorStop(0.6, "#78350f"); logG.addColorStop(1, "#92400e");
-          ctx.fillStyle = logG;
-          ctx.beginPath(); ctx.roundRect(-lw / 2, -lh2 / 2, lw, lh2, 5); ctx.fill();
-          // Wood grain lines
-          ctx.strokeStyle = "rgba(120,53,15,0.5)"; ctx.lineWidth = 1.5;
-          for (let wg = -lw / 2 + 16; wg < lw / 2; wg += 18) {
-            ctx.beginPath(); ctx.moveTo(wg, -lh2 / 2 + 2); ctx.lineTo(wg, lh2 / 2 - 2); ctx.stroke();
+          const lw4 = body.logW || hw * 2;
+          const lh4 = 30;
+
+          // Log shadow on water
+          ctx.fillStyle = "rgba(0,0,0,0.35)";
+          ctx.fillRect(-lw4 / 2 + 3, -lh4 / 2 + 3, lw4, lh4);
+
+          // Log body — flat warm brown (arcade style)
+          ctx.fillStyle = "#92400e";
+          ctx.fillRect(-lw4 / 2, -lh4 / 2, lw4, lh4);
+
+          // Lighter top-face strip (highlight)
+          ctx.fillStyle = "#b45309";
+          ctx.fillRect(-lw4 / 2, -lh4 / 2, lw4, 8);
+
+          // Dark bark vertical lines
+          ctx.strokeStyle = "rgba(60,25,5,0.6)"; ctx.lineWidth = 2;
+          for (let wg4 = -lw4 / 2 + 20; wg4 < lw4 / 2; wg4 += 22) {
+            ctx.beginPath(); ctx.moveTo(wg4, -lh4 / 2 + 2); ctx.lineTo(wg4, lh4 / 2 - 2); ctx.stroke();
           }
-          // End caps
+
+          // End caps (darker, rounded)
           ctx.fillStyle = "#78350f";
-          ctx.beginPath(); ctx.ellipse(-lw / 2, 0, 5, lh2 / 2, 0, 0, Math.PI * 2); ctx.fill();
-          ctx.beginPath(); ctx.ellipse(lw / 2, 0, 5, lh2 / 2, 0, 0, Math.PI * 2); ctx.fill();
+          ctx.fillRect(-lw4 / 2, -lh4 / 2, 8, lh4);
+          ctx.fillRect(lw4 / 2 - 8, -lh4 / 2, 8, lh4);
+
+          // Ring marks on end caps
+          ctx.strokeStyle = "rgba(180,100,30,0.5)"; ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.ellipse(-lw4 / 2 + 4, 0, 3, lh4 / 2 - 3, 0, 0, Math.PI * 2); ctx.stroke();
+          ctx.beginPath(); ctx.ellipse(lw4 / 2 - 4, 0, 3, lh4 / 2 - 3, 0, 0, Math.PI * 2); ctx.stroke();
+
           ctx.restore();
           break;
         }
         case "road-car": {
-          // Top-down car view — car moves horizontally, we look from above
+          // Classic Frogger top-down car — simple blocky pixel art style
           ctx.save();
           ctx.translate(pos.x, pos.y);
           const rcDir = body.roadDir || 1;
-          ctx.scale(rcDir, 1); // flip so headlights always face forward
+          ctx.scale(rcDir, 1);
           const rcColor = body.renderColor || "#ef4444";
+          const isTruck = body.isTruck || false;
+          const cw = isTruck ? 150 : 80;
+          const ch = isTruck ? 38 : 36;
+          const hw3 = cw / 2, hh3 = ch / 2;
 
-          // Tires — 4 corners, protrude slightly past body
-          ctx.fillStyle = "#111";
-          [[-33, -14], [33, -14], [-33, 14], [33, 14]].forEach(([tx, ty]) => {
-            ctx.beginPath();
-            ctx.ellipse(tx, ty, 9, 5, 0, 0, Math.PI * 2);
-            ctx.fill();
-            // Rim
-            ctx.fillStyle = "#666";
-            ctx.beginPath();
-            ctx.ellipse(tx, ty, 5, 3, 0, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = "#111";
-          });
+          // Dark outline / shadow base
+          ctx.fillStyle = "rgba(0,0,0,0.55)";
+          ctx.fillRect(-hw3 + 2, -hh3 + 2, cw, ch);
 
-          // Main car body
+          // Main body
           ctx.fillStyle = rcColor;
-          ctx.beginPath();
-          ctx.roundRect(-43, -12, 86, 24, 6);
-          ctx.fill();
+          ctx.fillRect(-hw3, -hh3, cw, ch);
 
-          // Rear bumper (left = rear when dir=1)
-          ctx.fillStyle = "rgba(160,160,160,0.6)";
-          ctx.beginPath();
-          ctx.roundRect(-47, -9, 6, 18, 2);
-          ctx.fill();
+          if (isTruck) {
+            // Truck cab (front block)
+            ctx.fillStyle = "rgba(0,0,0,0.35)";
+            ctx.fillRect(hw3 - 36, -hh3, 36, ch);
+            // Cab windows
+            ctx.fillStyle = "rgba(180,230,255,0.7)";
+            ctx.fillRect(hw3 - 32, -hh3 + 4, 26, ch - 8);
+            // Cargo body stripe
+            ctx.fillStyle = "rgba(255,255,255,0.12)";
+            ctx.fillRect(-hw3, -2, cw - 36, 4);
+          } else {
+            // Car windshield (front)
+            ctx.fillStyle = "rgba(180,230,255,0.8)";
+            ctx.fillRect(hw3 - 24, -hh3 + 5, 20, ch - 10);
+            // Rear window
+            ctx.fillStyle = "rgba(150,210,255,0.5)";
+            ctx.fillRect(-hw3 + 4, -hh3 + 5, 16, ch - 10);
+            // Roof dark panel
+            ctx.fillStyle = "rgba(0,0,0,0.3)";
+            ctx.fillRect(-hw3 + 20, -hh3 + 3, cw - 48, ch - 6);
+          }
 
-          // Rear window
-          ctx.fillStyle = "rgba(140,210,255,0.5)";
-          ctx.beginPath();
-          ctx.roundRect(-34, -8, 14, 16, 2);
-          ctx.fill();
+          // Headlights (bright yellow pair at front)
+          ctx.fillStyle = "#fef08a";
+          ctx.fillRect(hw3 - 4, -hh3 + 3, 5, 7);
+          ctx.fillRect(hw3 - 4, hh3 - 10, 5, 7);
 
-          // Cabin / roof (centre dark section)
-          ctx.fillStyle = "rgba(0,0,0,0.32)";
-          ctx.beginPath();
-          ctx.roundRect(-16, -9, 30, 18, 5);
-          ctx.fill();
-
-          // Windshield (front glass — bright strip near front)
-          ctx.fillStyle = "rgba(160,225,255,0.75)";
-          ctx.beginPath();
-          ctx.roundRect(15, -8, 20, 16, 3);
-          ctx.fill();
-
-          // Front bonnet / nose taper
-          ctx.fillStyle = rcColor;
-          ctx.beginPath();
-          ctx.moveTo(43, -12);
-          ctx.lineTo(49, -7);
-          ctx.lineTo(49, 7);
-          ctx.lineTo(43, 12);
-          ctx.closePath();
-          ctx.fill();
-
-          // Racing stripe
-          ctx.fillStyle = "rgba(255,255,255,0.18)";
-          ctx.fillRect(-43, -2, 86, 4);
-
-          // Headlights (front right — glow)
-          ctx.fillStyle = "rgba(255,255,190,0.97)";
-          ctx.shadowBlur = 14;
-          ctx.shadowColor = "#fef08a";
-          ctx.beginPath();
-          ctx.ellipse(48, -7, 4, 3, 0, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.beginPath();
-          ctx.ellipse(48, 7, 4, 3, 0, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.shadowBlur = 0;
-
-          // Taillights (rear left — red)
-          ctx.fillStyle = "rgba(255,30,30,0.92)";
-          ctx.shadowBlur = 8;
-          ctx.shadowColor = "#ef4444";
-          ctx.beginPath();
-          ctx.ellipse(-45, -7, 4, 3, 0, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.beginPath();
-          ctx.ellipse(-45, 7, 4, 3, 0, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.shadowBlur = 0;
+          // Tail lights (red pair at rear)
+          ctx.fillStyle = "#ff3333";
+          ctx.fillRect(-hw3 - 1, -hh3 + 3, 5, 7);
+          ctx.fillRect(-hw3 - 1, hh3 - 10, 5, 7);
 
           ctx.restore();
           break;
@@ -6482,7 +6738,7 @@
       if (!characterTrails.has(c.name)) characterTrails.set(c.name, []);
       let trail = characterTrails.get(c.name);
       trail.push({ x: pos.x, y: pos.y });
-      if (trail.length > 12) trail.shift();
+      if (trail.length > 6) trail.shift();
       let hueMatch = c.color.match(/hsl\((\d+\.?\d*)/);
       let charHue = hueMatch ? parseFloat(hueMatch[1]) : 200;
       for (let ti = 0; ti < trail.length - 1; ti++) {
@@ -7238,13 +7494,18 @@
         else {
           ctx.globalAlpha = Math.max(0, p.life);
           if (p.isCoin) {
-            // Coin: gold ellipse with glow
             ctx.shadowBlur = 8; ctx.shadowColor = "#f59e0b";
             ctx.fillStyle = "#fbbf24";
             ctx.beginPath(); ctx.ellipse(p.x, p.y, 5, 7, 0, 0, Math.PI * 2); ctx.fill();
             ctx.fillStyle = "#fde68a";
             ctx.beginPath(); ctx.ellipse(p.x - 1.5, p.y - 2, 2.5, 3.5, 0, 0, Math.PI * 2); ctx.fill();
             ctx.shadowBlur = 0;
+          } else if (p.isTetroCel) {
+            const cs = (p.celSize || 28) * Math.max(0.2, p.life);
+            ctx.fillStyle = p.color;
+            ctx.fillRect(p.x - cs / 2, p.y - cs / 2, cs, cs);
+            ctx.fillStyle = "rgba(255,255,255,0.25)";
+            ctx.fillRect(p.x - cs / 2, p.y - cs / 2, cs, 3);
           } else {
             ctx.fillStyle = p.color;
             ctx.beginPath();
