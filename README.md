@@ -1,8 +1,10 @@
-<div align="center">
-  <h1>🎯 Plinko Picker</h1>
-  <p><strong>A chaotic, physics-based, and ridiculously fun way to pick students at random!</strong></p>
-  <p>Created by Jonathan Kung — Full-Time High School Teacher</p>
-</div>
+# 🎯 Plinko Picker
+
+> A chaotic, physics-based, and ridiculously fun way to pick students at random — great for **teachers**, **presenters**, and **events**.
+
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-Visit%20Site-A6E22E?style=for-the-badge&logo=github)](https://jcykung.github.io/plinko-picker)
+[![License](https://img.shields.io/badge/License-MIT-66D9EF?style=for-the-badge)](LICENSE)
+[![Dependencies](https://img.shields.io/badge/Dependencies-Matter.js-AE81FF?style=for-the-badge)]()
 
 ---
 
@@ -12,34 +14,62 @@ Say goodbye to boring popsicle sticks, random number generators, and standard sp
 
 Whether you need to call on a student, pick a winner for a game, or just want to build suspense, Plinko Picker turns a simple task into a classroom-wide event. Watch as student names (assigned to random emojis) bounce, tumble, dodge obstacles, and race their way to the bottom!
 
-## ✨ Features
+---
 
-- **🚀 Physics-Based Racing:** Powered by `Matter.js`, every race is physically simulated for maximum suspense and zero predictability.
-- **⏱️ Customizable Time Limits:** Set the race duration from a quick 10 seconds to an agonizing 120-second marathon.
-- **🎵 Built-In "Juice":** Engaging music, sound effects, particles, and screen shake that dynamically build up as the race progresses. Beware of the sudden death flashes!
-- **🧑‍🎓 Seamless Class Management:**
-  - Paste your student names directly.
-  - Upload a `.csv` or `.txt` file.
-  - Auto-reformats "Last, First" into "First Last".
-  - Save and manage multiple class periods directly in the app.
-  - Automatically handles and resolves duplicate names gracefully.
-- **🌈 Dynamic Environments:** Enjoy different colorful biomes each time you race, complete with unique weather and physics properties.
+## ✨ Features at a Glance
+| Feature | Desktop | Mobile |
+|---|---|---|
+| 🚀 Physics-based racing (`Matter.js`) | ✅ | ✅ |
+| ⏱️ Customizable time limits (10s to 120s) | ✅ | ✅ |
+| 🎵 Built-in music, sound effects, & screen shake | ✅ | ✅ |
+| 🧑‍🎓 Class management (.csv, paste, auto-format) | ✅ | ✅ |
+| 💾 Multi-class save & manage | ✅ | ✅ |
+| 🌈 Dynamic environments (biomes, weather) | ✅ | ✅ |
 
-## 🛠 Tech Stack
+---
 
-Plinko Picker is lightweight and completely client-side. No databases, no complicated backend—just pure web technologies running directly in your browser.
+## 📖 How to Use
 
-- **HTML5 & Vanilla JavaScript** 
-- **Tailwind CSS** - For beautiful, responsive, and modern glassmorphism UI styling.
-- **Matter.js** - For robust 2D rigid body physics simulations out of the box.
+### 🧑‍🎓 Step 1 — Add Students
+Simply open the app and paste your student list, type it manually, or upload a `.csv` or `.txt` file. The app automatically reformats "Last, First" into "First Last" and resolves duplicates gracefully.
 
-## 🚀 How to Use
+---
 
-1. **Open the App:** Simply open `index.html` in your favorite modern web browser or host it via GitHub Pages.
-2. **Add Students:** Type, paste, or upload your student list.
-3. (Optional) **Save Your Roster:**  Click "Save" to remember your class for next time. The app remembers your rosters!
-4. **Set the Timer:** Choose how long you want the race to last using the slider.
-5. **Start the Race!** Hit the **🚀 Start the Race!** button, toggle the music, and watch the chaos unfold.
+### 💾 Step 2 — Save Your Roster (Optional)
+Click **Save** to remember your class for next time. The app remembers multiple class periods and rosters directly in your browser.
+
+---
+
+### ⏱️ Step 3 — Set the Timer
+Choose how long you want the race to last using the slider. You can set it anywhere from a quick 10 seconds to an agonizing 120-second marathon.
+
+---
+
+### 🚀 Step 4 — Start the Race!
+Hit the **🚀 Start the Race!** button, toggle the music, and watch the chaos unfold as student emojis bounce and tumble their way to the finish line!
+
+---
+
+## 🏗️ Tech Stack
+| | |
+|---|---|
+| **Framework** | None — HTML5 and Vanilla JavaScript |
+| **Styling** | [Tailwind CSS](https://tailwindcss.com/) |
+| **Physics** | [Matter.js](https://brm.io/matter-js/) |
+| **Storage** | Browser `localStorage` |
+
+---
+
+## 🌐 Browser Support
+| Browser | Supported |
+|---|---|
+| Chrome / Edge | ✅ Fully supported |
+| Firefox | ✅ Fully supported |
+| Safari (macOS) | ✅ Fully supported |
+| Safari (iOS) | ✅ Fully supported |
+| Android Chrome | ✅ Fully supported |
+
+---
 
 ## 👨‍🏫 Note from the Creator
 
@@ -47,7 +77,16 @@ Plinko Picker is lightweight and completely client-side. No databases, no compli
 
 ---
 
-<div align="center">
-  <br>
-  <p>Built with ❤️ by Jonathan Kung</p>
-</div>
+## ☕ Support
+If you find this useful, consider buying me a coffee!
+
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20this%20project-F92672?style=for-the-badge&logo=ko-fi)](https://ko-fi.com/coolpuddytat)
+
+---
+
+## 📄 License
+MIT — free to use, modify, and distribute. Attribution appreciated but not required.
+
+---
+
+_Built with ❤️ by [Jonathan Kung](https://ko-fi.com/coolpuddytat)_
