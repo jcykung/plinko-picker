@@ -21,10 +21,10 @@ Whether you need to call on a student, pick a winner for a game, or just want to
 |---|---|---|
 | 🚀 Physics-based racing (`Matter.js`) | ✅ | ✅ |
 | ⏱️ Customizable time limits (10s to 120s) | ✅ | ✅ |
-| 🎵 Built-in music, sound effects, & screen shake | ✅ | ✅ |
+| 🎵 Built-in music and sound effects | ✅ | ✅ |
 | 🧑‍🎓 Class management (.csv, paste, auto-format) | ✅ | ✅ |
 | 💾 Multi-class save & manage | ✅ | ✅ |
-| 🌈 Dynamic environments (biomes, weather) | ✅ | ✅ |
+| 🌈 Dynamic environments | ✅ | ✅ |
 
 ---
 
@@ -73,7 +73,7 @@ Hit the **🚀 Start the Race!** button, toggle the music, and watch the chaos u
 
 ## 👨‍🏫 Note from the Creator
 
-*As a full-time high school teacher, I know how hard it can be to keep students engaged everyday. Sometimes, all it takes is turning a mundane classroom procedure—like calling on someone—into a spectacle. I built Plinko Picker to give my students an excuse to cheer, laugh, and lean forward in their seats. I hope it brings the same joy to your classroom!* 
+*As a full-time high school teacher, I know how hard it can be to keep students engaged every day. Sometimes, all it takes is turning a mundane classroom procedure—like calling on someone—into a spectacle. I built Plinko Picker to give my students an excuse to cheer, laugh, and lean forward in their seats. I hope it brings the same joy to your classroom!* 
 
 ---
 
